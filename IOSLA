@@ -1,0 +1,1064 @@
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+iOS LEGACY ANALYZER
+Versao 0.0.1 — Terminal Edition
+
+Execute no terminal do VS Code:
+    python3 main.py
+
+Requisitos: Python 3.10+
+Dependencias externas: nenhuma
+
+Funcoes:
+- Abrir arquivos IPSW
+- Identificar versoes, builds e dispositivos
+- Examinar BuildManifest.plist
+- Localizar kernelcaches e componentes de firmware
+- Comparar componentes entre duas versoes do iOS
+- Procurar arquivos relacionados a drivers
+- Exportar relatorios JSON e Markdown
+
+Este programa nao modifica nem restaura firmwares.
+"""
+
+import os
+import sys
+import json
+import plistlib
+import zipfile
+import shutil
+
+from pathlib import Path
+from datetime import datetime
+
+
+# ==============================================
+# CONFIGURACOES VISUAIS
+# ==============================================
+
+os.system("")
+
+ANSI = sys.stdout.isatty()
+
+
+class C:
+    RESET = "\033[0m" if ANSI else ""
+    BLUE = "\033[94m" if ANSI else ""
+    CYAN = "\033[96m" if ANSI else ""
+    GREEN = "\033[92m" if ANSI else ""
+    YELLOW = "\033[93m" if ANSI else ""
+    RED = "\033[91m" if ANSI else ""
+    GRAY = "\033[90m" if ANSI else ""
+    BOLD = "\033[1m" if ANSI else ""
+    PURPLE = "\033[95m" if ANSI else ""
+
+
+VERSION = "0.0.1"
+APP_NAME = "iOS LEGACY ANALYZER"
+
+source = None
+target = None
+last_comparison = None
+
+
+# ==============================================
+# INTERFACE DE TERMINAL
+# ==============================================
+
+def width():
+    return min(shutil.get_terminal_size((82, 24)).columns, 82)
+
+
+def line():
+    print(C.GRAY + "─" * width() + C.RESET)
+
+
+def clear():
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def pause():
+    try:
+        input(
+            "\n" + C.GRAY +
+            "Pressione ENTER para continuar..." +
+            C.RESET
+        )
+    except EOFError:
+        pass
+
+
+def print_ok(message):
+    print(C.GREEN + "[OK] " + C.RESET + str(message))
+
+
+def print_error(message):
+    print(C.RED + "[ERRO] " + C.RESET + str(message))
+
+
+def print_warning(message):
+    print(C.YELLOW + "[AVISO] " + C.RESET + str(message))
+
+
+def print_info(message):
+    print(C.CYAN + "[INFO] " + C.RESET + str(message))
+
+
+def section(title):
+    print()
+    line()
+    print(C.BOLD + C.CYAN + " " + title + C.RESET)
+    line()
+
+
+def shorten(text, limit=58):
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return text[:limit - 3] + "..."
+
+
+def human_size(size):
+    size = float(size)
+
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.2f} {unit}"
+        size /= 1024
+
+
+def banner():
+    print(C.BLUE + C.BOLD + r"""
+  ██╗ ██████╗ ███████╗
+  ██║██╔═══██╗██╔════╝
+  ██║██║   ██║███████╗
+  ██║██║   ██║╚════██║
+  ██║╚██████╔╝███████║
+  ╚═╝ ╚═════╝ ╚══════╝
+""" + C.RESET)
+
+    print(C.BOLD + "  LEGACY ANALYZER" + C.RESET)
+    print(C.GRAY + "  Terminal Edition | v" + VERSION + C.RESET)
+    print(C.GRAY + "  Firmware Research & Compatibility" + C.RESET)
+    print()
+    line()
+
+
+def header():
+    clear()
+    banner()
+
+    print()
+    print(
+        C.GRAY + " FIRMWARE ORIGINAL : " + C.RESET +
+        (
+            C.GREEN + shorten(source["filename"], 43)
+            if source else C.YELLOW + "Nao selecionado"
+        ) + C.RESET
+    )
+
+    print(
+        C.GRAY + " FIRMWARE DESTINO  : " + C.RESET +
+        (
+            C.GREEN + shorten(target["filename"], 43)
+            if target else C.YELLOW + "Nao selecionado"
+        ) + C.RESET
+    )
+
+    print()
+    line()
+
+
+def menu():
+    print()
+    print(C.BOLD + "  MENU PRINCIPAL" + C.RESET)
+    print()
+    print("  [1]  Selecionar IPSW original")
+    print("  [2]  Selecionar IPSW de destino")
+    print("  [3]  Informacoes dos firmwares")
+    print("  [4]  Comparar componentes")
+    print("  [5]  Analisar kernelcaches e drivers")
+    print("  [6]  Pesquisar arquivos nos IPSWs")
+    print("  [7]  Exportar relatorios")
+    print()
+    print("  [0]  Sair")
+    print()
+    line()
+
+
+# ==============================================
+# LEITURA DOS ARQUIVOS IPSW
+# ==============================================
+
+def read_plist(archive, filename):
+    try:
+        return plistlib.loads(archive.read(filename))
+    except KeyError:
+        return {}
+    except (ValueError, TypeError, plistlib.InvalidFileException):
+        return {}
+
+
+def get_component_paths(build_manifest):
+    """
+    Reune referencias de componentes presentes
+    nas identidades do BuildManifest.
+
+    Nao extrai nem descompila os componentes.
+    """
+
+    components = {}
+
+    identities = build_manifest.get("BuildIdentities", [])
+
+    if not isinstance(identities, list):
+        return components
+
+    for identity in identities:
+
+        manifest = identity.get("Manifest", {})
+
+        if not isinstance(manifest, dict):
+            continue
+
+        for name, data in manifest.items():
+
+            if not isinstance(data, dict):
+                continue
+
+            info = data.get("Info", {})
+
+            if not isinstance(info, dict):
+                continue
+
+            path = info.get("Path")
+
+            if isinstance(path, str):
+                components.setdefault(name, set()).add(path)
+
+    return {
+        name: sorted(paths)
+        for name, paths in sorted(components.items())
+    }
+
+
+def classify_component(name):
+    lower = name.lower()
+
+    categories = [
+        (("kernel",), "Kernel"),
+        (("sep", "sepfw"), "Secure Enclave"),
+        (("baseband", "bbfw"), "Baseband"),
+        (("devicetree",), "Device Tree"),
+        (("trustcache",), "Trust Cache"),
+        (("iboot", "ibec", "ibss", "llb"), "Boot"),
+        (("ramdisk",), "Ramdisk"),
+        (("restore",), "Restore"),
+        (("aop", "isp", "ans", "wifi"), "Hardware/Firmware"),
+    ]
+
+    for words, category in categories:
+        if any(word in lower for word in words):
+            return category
+
+    return "Outros"
+
+
+def inspect_ipsw(path):
+    """
+    Analisa somente metadados e entradas ZIP.
+
+    Nao altera o IPSW e nao extrai conteudo
+    para o disco.
+    """
+
+    path = Path(path).expanduser().resolve()
+
+    if not path.is_file():
+        raise FileNotFoundError("Arquivo nao encontrado.")
+
+    if not zipfile.is_zipfile(path):
+        raise ValueError("O arquivo nao e um ZIP/IPSW valido.")
+
+    with zipfile.ZipFile(path, "r") as archive:
+
+        members = archive.infolist()
+
+        names = [member.filename for member in members]
+
+        name_set = set(names)
+
+        manifest = read_plist(
+            archive,
+            "BuildManifest.plist"
+        )
+
+        restore = read_plist(
+            archive,
+            "Restore.plist"
+        )
+
+        version = (
+            manifest.get("ProductVersion")
+            or restore.get("ProductVersion")
+            or "Desconhecida"
+        )
+
+        build = (
+            manifest.get("ProductBuildVersion")
+            or restore.get("ProductBuildVersion")
+            or "Desconhecida"
+        )
+
+        devices = manifest.get(
+            "SupportedProductTypes", []
+        )
+
+        if not isinstance(devices, list):
+            devices = []
+
+        components = get_component_paths(manifest)
+
+        kernel_files = sorted(
+            name for name in names
+            if "kernelcache" in name.lower()
+        )
+
+        kext_files = sorted(
+            name for name in names
+            if ".kext/" in name.lower()
+            or name.lower().endswith(".kext")
+        )
+
+        firmware_files = sorted(
+            name for name in names
+            if name.lower().startswith("firmware/")
+        )
+
+        zip_metadata = {
+            member.filename: {
+                "size": member.file_size,
+                "crc": member.CRC
+            }
+            for member in members
+            if not member.is_dir()
+        }
+
+    referenced = sorted({
+        item
+        for paths in components.values()
+        for item in paths
+    })
+
+    missing_references = [
+        item for item in referenced
+        if item not in name_set
+    ]
+
+    return {
+        "path": str(path),
+        "filename": path.name,
+        "file_size": path.stat().st_size,
+        "version": str(version),
+        "build": str(build),
+        "devices": sorted(set(map(str, devices))),
+        "components": components,
+        "kernels": kernel_files,
+        "kext_files": kext_files,
+        "firmware_files": firmware_files,
+        "files": names,
+        "file_metadata": zip_metadata,
+        "missing_references": missing_references,
+        "file_count": len(names),
+        "identity_count": len(
+            manifest.get("BuildIdentities", [])
+        ),
+        "has_manifest": bool(manifest),
+        "has_restore_plist": bool(restore),
+    }
+
+
+def select_ipsw(label):
+    section("SELECIONAR " + label.upper())
+
+    print()
+    print("Arraste o arquivo IPSW para o Terminal")
+    print("ou digite seu caminho completo.")
+    print()
+
+    path = input(
+        C.CYAN + "IPSW > " + C.RESET
+    ).strip().strip("'\"")
+
+    if not path:
+        print_warning("Operacao cancelada.")
+        return None
+
+    try:
+        print_info("Analisando estrutura do arquivo...")
+
+        result = inspect_ipsw(path)
+
+        print_ok("Arquivo IPSW identificado.")
+        print()
+        print(" Nome       :", result["filename"])
+        print(" iOS        :", result["version"])
+        print(" Build      :", result["build"])
+        print(" Tamanho    :", human_size(result["file_size"]))
+        print(" Arquivos   :", result["file_count"])
+        print(" Componentes:", len(result["components"]))
+
+        if result["devices"]:
+            print(
+                " Dispositivos:",
+                ", ".join(result["devices"][:8])
+            )
+
+        if not result["has_manifest"]:
+            print_warning(
+                "BuildManifest.plist nao encontrado ou invalido."
+            )
+
+        return result
+
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print_error(error)
+        return None
+
+
+# ==============================================
+# INFORMACOES DOS FIRMWARES
+# ==============================================
+
+def show_device(info, label):
+    section(label)
+
+    if not info:
+        print_warning("Nenhum IPSW selecionado.")
+        return
+
+    fields = [
+        ("Arquivo", info["filename"]),
+        ("Versao iOS", info["version"]),
+        ("Build", info["build"]),
+        ("Tamanho", human_size(info["file_size"])),
+        ("Arquivos ZIP", info["file_count"]),
+        ("Identidades", info["identity_count"]),
+        ("Componentes", len(info["components"])),
+        ("Kernelcaches", len(info["kernels"])),
+        ("Firmware files", len(info["firmware_files"])),
+        ("KEXTs visiveis", len(info["kext_files"])),
+    ]
+
+    for name, value in fields:
+        print(f" {name:<19}: {value}")
+
+    print()
+    print(C.CYAN + "Dispositivos declarados:" + C.RESET)
+
+    if info["devices"]:
+        for device in info["devices"]:
+            print("  -", device)
+    else:
+        print("  Nao identificados")
+
+    if info["missing_references"]:
+        print()
+        print_warning(
+            f"{len(info['missing_references'])} caminhos do "
+            "manifesto nao encontrados diretamente no ZIP."
+        )
+
+
+def show_information():
+    header()
+
+    show_device(source, "FIRMWARE ORIGINAL")
+    show_device(target, "FIRMWARE DE DESTINO")
+
+    pause()
+
+
+# ==============================================
+# COMPARADOR DE COMPONENTES
+# ==============================================
+
+def metadata_for(info, path):
+    return info["file_metadata"].get(path)
+
+
+def compare_component(name, old, new):
+
+    old_paths = old["components"].get(name, [])
+    new_paths = new["components"].get(name, [])
+
+    if not old_paths:
+        status = "ADICIONADO"
+
+    elif not new_paths:
+        status = "REMOVIDO"
+
+    elif old_paths != new_paths:
+        status = "CAMINHO DIFERENTE"
+
+    else:
+        changes = []
+
+        for path in old_paths:
+
+            old_meta = metadata_for(old, path)
+            new_meta = metadata_for(new, path)
+
+            if old_meta is None or new_meta is None:
+                changes.append("SEM DADOS")
+                continue
+
+            same_crc = (
+                old_meta["crc"] == new_meta["crc"]
+                and old_meta["size"] == new_meta["size"]
+            )
+
+            changes.append(
+                "IGUAL" if same_crc else "CONTEUDO DIFERENTE"
+            )
+
+        if all(x == "IGUAL" for x in changes):
+            status = "IDENTICO"
+
+        elif "CONTEUDO DIFERENTE" in changes:
+            status = "CONTEUDO DIFERENTE"
+
+        else:
+            status = "NAO VERIFICADO"
+
+    return {
+        "name": name,
+        "category": classify_component(name),
+        "status": status,
+        "old_paths": old_paths,
+        "new_paths": new_paths,
+    }
+
+
+def run_comparison():
+    if not source or not target:
+        print_error("Selecione os dois IPSWs primeiro.")
+        return None
+
+    names = sorted(
+        set(source["components"])
+        | set(target["components"])
+    )
+
+    components = [
+        compare_component(name, source, target)
+        for name in names
+    ]
+
+    summary = {}
+
+    for item in components:
+        key = item["status"]
+        summary[key] = summary.get(key, 0) + 1
+
+    return {
+        "date": datetime.now().isoformat(timespec="seconds"),
+        "source": {
+            "filename": source["filename"],
+            "version": source["version"],
+            "build": source["build"],
+            "devices": source["devices"],
+        },
+        "target": {
+            "filename": target["filename"],
+            "version": target["version"],
+            "build": target["build"],
+            "devices": target["devices"],
+        },
+        "summary": summary,
+        "components": components,
+        "note": (
+            "A comparacao usa caminhos, tamanhos e CRC32 "
+            "das entradas ZIP. Nao verifica interfaces de "
+            "kernel, dependencias de KEXTs ou compatibilidade "
+            "de drivers. Referencias com caminhos diferentes "
+            "nao sao necessariamente binarios diferentes."
+        )
+    }
+
+
+def status_color(status):
+    if status == "IDENTICO":
+        return C.GREEN
+    if status == "ADICIONADO":
+        return C.CYAN
+    if status == "REMOVIDO":
+        return C.RED
+    if status == "CONTEUDO DIFERENTE":
+        return C.YELLOW
+    return C.PURPLE
+
+
+def show_comparison():
+    global last_comparison
+
+    header()
+    section("COMPARACAO DE COMPONENTES")
+
+    comparison = run_comparison()
+
+    if comparison is None:
+        pause()
+        return
+
+    last_comparison = comparison
+
+    print()
+    print(
+        f" Origem : iOS {source['version']} "
+        f"({source['build']})"
+    )
+    print(
+        f" Destino: iOS {target['version']} "
+        f"({target['build']})"
+    )
+    print()
+
+    for status, count in sorted(
+        comparison["summary"].items()
+    ):
+        print(
+            " " + status_color(status) +
+            f"{status:<21}" + C.RESET +
+            f" {count}"
+        )
+
+    section("COMPONENTES")
+
+    for index, component in enumerate(
+        comparison["components"], 1
+    ):
+        status = component["status"]
+
+        print(
+            f" {index:>3}. "
+            + shorten(component["name"], 34).ljust(35)
+            + status_color(status)
+            + status
+            + C.RESET
+        )
+
+    print()
+    print_warning(
+        "Diferenças de arquivos nao demonstram "
+        "compatibilidade de drivers."
+    )
+
+    print()
+    choice = input(
+        C.CYAN +
+        "Numero para detalhes (ENTER para voltar) > " +
+        C.RESET
+    ).strip()
+
+    if choice.isdigit():
+        index = int(choice) - 1
+
+        if 0 <= index < len(comparison["components"]):
+            show_component_details(
+                comparison["components"][index]
+            )
+
+    pause()
+
+
+def show_component_details(component):
+    section("DETALHES DO COMPONENTE")
+
+    print()
+    print(" Nome     :", component["name"])
+    print(" Categoria:", component["category"])
+    print(" Estado   :", component["status"])
+
+    print()
+    print(C.CYAN + "Caminhos no IPSW original:" + C.RESET)
+
+    for path in component["old_paths"]:
+        print("  ", path)
+
+    if not component["old_paths"]:
+        print("   Nenhum")
+
+    print()
+    print(C.CYAN + "Caminhos no IPSW destino:" + C.RESET)
+
+    for path in component["new_paths"]:
+        print("  ", path)
+
+    if not component["new_paths"]:
+        print("   Nenhum")
+
+
+# ==============================================
+# ANALISE DE KERNELCACHES
+# ==============================================
+
+def analyze_drivers():
+    header()
+    section("ANALISE DE KERNELCACHES E DRIVERS")
+
+    if not source and not target:
+        print_error("Selecione pelo menos um IPSW.")
+        pause()
+        return
+
+    for label, info in (
+        ("FIRMWARE ORIGINAL", source),
+        ("FIRMWARE DESTINO", target),
+    ):
+
+        if info is None:
+            continue
+
+        section(label)
+
+        print()
+        print(" iOS:", info["version"])
+        print(" Kernelcaches localizados:", len(info["kernels"]))
+
+        for kernel in info["kernels"][:30]:
+            print(
+                C.CYAN + " [KERNEL] " + C.RESET +
+                shorten(kernel, 65)
+            )
+
+        print()
+        print(" Componentes de firmware:")
+        print()
+
+        for name, paths in info["components"].items():
+
+            if classify_component(name) in (
+                "Kernel",
+                "Hardware/Firmware",
+                "Device Tree",
+                "Secure Enclave",
+            ):
+                print(" ", C.BLUE + name + C.RESET)
+
+                for path in paths[:3]:
+                    print(
+                        C.GRAY + "    " +
+                        shorten(path, 67) +
+                        C.RESET
+                    )
+
+        print()
+        print(" KEXTs diretamente visiveis no ZIP:",
+              len(info["kext_files"]))
+
+        for item in info["kext_files"][:30]:
+            print("  ", item)
+
+        if not info["kext_files"]:
+            print_info(
+                "Nenhuma KEXT separada identificada. "
+                "Drivers do iOS podem estar incorporados "
+                "ao kernelcache."
+            )
+
+    section("LIMITACOES DA ANALISE")
+
+    print("""
+ Este analisador examina arquivos e manifestos IPSW.
+
+ Para descobrir as KEXTs incorporadas, e necessario
+ analisar o kernelcache com ferramentas adicionais.
+
+ A existencia de uma KEXT antiga nao significa que
+ ela funcionara em um kernel mais recente.
+""")
+
+    pause()
+
+
+# ==============================================
+# PESQUISA DE ARQUIVOS
+# ==============================================
+
+def search_files():
+    header()
+    section("PESQUISA DE ARQUIVOS IPSW")
+
+    if not source and not target:
+        print_error("Nenhum IPSW selecionado.")
+        pause()
+        return
+
+    print()
+    keyword = input(
+        C.CYAN + "Pesquisar > " + C.RESET
+    ).strip().lower()
+
+    if not keyword:
+        print_warning("Digite um termo.")
+        pause()
+        return
+
+    for label, info in (
+        ("ORIGINAL", source),
+        ("DESTINO", target),
+    ):
+
+        if info is None:
+            continue
+
+        results = [
+            name for name in info["files"]
+            if keyword in name.lower()
+        ]
+
+        section(f"{label} — {len(results)} RESULTADOS")
+
+        for name in results[:100]:
+            print(" ", shorten(name, 76))
+
+        if len(results) > 100:
+            print_warning(
+                f"Mostrando 100 de {len(results)} resultados."
+            )
+
+    pause()
+
+
+# ==============================================
+# EXPORTACAO DE RELATORIOS
+# ==============================================
+
+def markdown_report(comparison):
+    lines = [
+        "# iOS Legacy Analyzer — Relatorio",
+        "",
+        f"Data: {comparison['date']}",
+        "",
+        "## Firmware original",
+        "",
+        f"- Arquivo: `{comparison['source']['filename']}`",
+        f"- iOS: {comparison['source']['version']}",
+        f"- Build: {comparison['source']['build']}",
+        "",
+        "## Firmware de destino",
+        "",
+        f"- Arquivo: `{comparison['target']['filename']}`",
+        f"- iOS: {comparison['target']['version']}",
+        f"- Build: {comparison['target']['build']}",
+        "",
+        "## Resumo",
+        "",
+    ]
+
+    for status, count in comparison["summary"].items():
+        lines.append(f"- {status}: {count}")
+
+    lines.extend([
+        "",
+        "## Comparacao",
+        "",
+        "| Componente | Categoria | Estado |",
+        "|---|---|---|",
+    ])
+
+    for component in comparison["components"]:
+        name = component["name"].replace("|", "\\|")
+        category = component["category"]
+        status = component["status"]
+
+        lines.append(
+            f"| {name} | {category} | {status} |"
+        )
+
+    lines.extend([
+        "",
+        "## Detalhes dos caminhos",
+        "",
+    ])
+
+    for component in comparison["components"]:
+        lines.append(f"### {component['name']}")
+        lines.append("")
+        lines.append(f"Estado: {component['status']}")
+        lines.append("")
+        lines.append("Original:")
+
+        for path in component["old_paths"]:
+            lines.append(f"- `{path}`")
+
+        if not component["old_paths"]:
+            lines.append("- Nenhum")
+
+        lines.append("")
+        lines.append("Destino:")
+
+        for path in component["new_paths"]:
+            lines.append(f"- `{path}`")
+
+        if not component["new_paths"]:
+            lines.append("- Nenhum")
+
+        lines.append("")
+
+    lines.extend([
+        "## Limitacoes",
+        "",
+        comparison["note"],
+        "",
+        "Este relatorio nao confirma compatibilidade "
+        "de kernel ou de drivers.",
+        "",
+    ])
+
+    return "\n".join(lines)
+
+
+def export_reports():
+    global last_comparison
+
+    header()
+    section("EXPORTAR RELATORIOS")
+
+    comparison = run_comparison()
+
+    if comparison is None:
+        pause()
+        return
+
+    last_comparison = comparison
+
+    print()
+    print("Pasta de destino.")
+    print("Pressione ENTER para usar ./relatorios")
+    print()
+
+    folder = input(
+        C.CYAN + "Destino > " + C.RESET
+    ).strip().strip("'\"")
+
+    if not folder:
+        folder = "relatorios"
+
+    try:
+        directory = Path(folder).expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        json_path = directory / (
+            f"ios_legacy_{timestamp}.json"
+        )
+
+        md_path = directory / (
+            f"ios_legacy_{timestamp}.md"
+        )
+
+        with open(
+            json_path, "w", encoding="utf-8"
+        ) as file:
+            json.dump(
+                comparison,
+                file,
+                ensure_ascii=False,
+                indent=2
+            )
+
+        with open(
+            md_path, "w", encoding="utf-8"
+        ) as file:
+            file.write(markdown_report(comparison))
+
+        print()
+        print_ok("Relatorios gerados.")
+
+        print()
+        print(" JSON:", json_path)
+        print(" MD  :", md_path)
+
+    except OSError as error:
+        print_error(error)
+
+    pause()
+
+
+# ==============================================
+# PROGRAMA PRINCIPAL
+# ==============================================
+
+def main():
+    global source, target, last_comparison
+
+    while True:
+
+        header()
+        menu()
+
+        try:
+            option = input(
+                C.CYAN + "legacy@ios ~ % " + C.RESET
+            ).strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            break
+
+        if option == "1":
+            header()
+
+            result = select_ipsw("IPSW original")
+
+            if result is not None:
+                source = result
+                last_comparison = None
+
+            pause()
+
+        elif option == "2":
+            header()
+
+            result = select_ipsw("IPSW de destino")
+
+            if result is not None:
+                target = result
+                last_comparison = None
+
+            pause()
+
+        elif option == "3":
+            show_information()
+
+        elif option == "4":
+            show_comparison()
+
+        elif option == "5":
+            analyze_drivers()
+
+        elif option == "6":
+            search_files()
+
+        elif option == "7":
+            export_reports()
+
+        elif option == "0":
+            break
+
+        else:
+            print_error("Comando desconhecido.")
+            pause()
+
+    print()
+    print(C.CYAN + "Encerrando iOS Legacy Analyzer." + C.RESET)
+    print()
+
+
+if __name__ == "__main__":
+    main()
