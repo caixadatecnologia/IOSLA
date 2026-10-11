@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""IOSLA v0.0.9 — Mach-O Fileset Mapping & ABI Recovery e análise local de IPSW para pesquisa de compatibilidade.
-
+"""IOSLA v0.0.11 — independent read-only IPSW and Mach-O kernelcache analyzer.
     python3 main.py
     python3 main.py --diagnose-ipsw "/caminho/firmware.ipsw"
     python3 main.py --self-test
@@ -559,7 +558,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.0.9"
+APP_VERSION = "0.0.11"
 MAX_KERNEL_SIZE = 768 * 1024 * 1024
 
 
@@ -4308,7 +4307,7 @@ Terminal.analyze=_v008_analyze
 
 def _v008_show(self):
     print('\n'+Style.BLUE+'═'*66+Style.RESET)
-    print('       IOSLA v0.0.9 | FILESET MAPPING + ABI RECOVERY')
+    print('       IOSLA v'+APP_VERSION+' | BINARY FUNCTIONS + INTERFACE RESEARCH')
     print('                Offline · Somente leitura')
     print(Style.BLUE+'═'*66+Style.RESET)
     for key,label in (('ORIGEM','iPhone XS · A12 · iOS 18'),
@@ -4964,7 +4963,7 @@ def _v009_self_test():
                                     ('TRIANGULACAO',tri,_v009_triangulation_md)]:
             jp,md=_v008_export(prefix,rep,renderer,Path(td))
             assert jp.is_file() and md.is_file()
-            assert json.loads(jp.read_text())['iosla_version']=='0.0.9'
+            assert json.loads(jp.read_text())['iosla_version']==APP_VERSION
     print('IOSLA v0.0.9: offsets globais fileset, __TEXT_EXEC, LC_FUNCTION_STARTS e triangulação por par OK.')
 
 
@@ -4978,6 +4977,1185 @@ def main():
         _v009_self_test()
         return
     _v009_previous_main()
+
+
+
+# ==========================================================================
+# IOSLA v0.0.10 — BINARY FUNCTION ANALYSIS & INTERFACE RESEARCH
+# ==========================================================================
+# Bounded read-only ARM64 inspection.  These patterns are intentionally a small
+# subset of AArch64 instructions; neither disassembly nor recovered call edges
+# constitute a reconstructed ABI or a loader/linker for proprietary drivers.
+
+V010_FOCUS = ('com.apple.AGXG11P','com.apple.AGXG12P',
+              'com.apple.iokit.IOGPUFamily','com.apple.iokit.IOSurface',
+              'com.apple.driver.AppleARMPlatform')
+V010_MAX_FNS = 1500
+V010_MAX_FUNCTION_STARTS = 100000
+V010_MAX_INSN_PER_FN = 512
+V010_MAX_SECTION_BYTES = 24 * 1024 * 1024
+V010_MAX_MATCHES_PER_PAIR = 80
+V010_MAX_REFERENCES_PER_IMAGE = 500
+
+
+def _v010_signed_imm(value: int, bits: int) -> int:
+    flag = 1 << (bits-1)
+    return (value ^ flag) - flag
+
+
+def _v010_classify(word: int, vmaddr: int) -> tuple[str, int | None]:
+    """Small ARM64 instruction classifier; only B/BL immediate have direct targets."""
+    op = word & 0xfc000000
+    if op == 0x94000000:
+        return 'BL', vmaddr + (_v010_signed_imm(word & 0x03ffffff,26) << 2)
+    if op == 0x14000000:
+        return 'B', vmaddr + (_v010_signed_imm(word & 0x03ffffff,26) << 2)
+    if (word & 0xfffffc1f) == 0xd65f0000 or word in (0xd65f0bff,0xd65f0fff):
+        return 'RET',None
+    if (word & 0xfffffc1f) == 0xd63f0000:
+        return 'BLR',None
+    if (word & 0xfffffc1f) == 0xd61f0000:
+        return 'BR',None
+    if word in (0xd503233f,0xd503237f,0xd50323bf,0xd50323ff):
+        return 'PAC',None
+    if (word & 0xff000010) == 0x54000000:
+        return 'BCOND',None
+    if (word & 0x7e000000) == 0x34000000 or (word & 0x7e000000)==0x36000000:
+        return 'BCOND',None
+    if (word & 0x9f000000) == 0x90000000:
+        return 'ADRP',None
+    if (word & 0x9f000000) == 0x10000000:
+        return 'ADR',None
+    if (word & 0x3b000000) == 0x18000000:
+        return 'LDRLIT',None
+    if (word & 0x0a000000) == 0x08000000:
+        return 'LOADSTORE',None
+    if (word & 0x1c000000) in (0x10000000,0x14000000):
+        return 'ALU',None
+    if (word & 0x0e000000) == 0x0e000000:
+        return 'SIMD',None
+    return 'OTHER',None
+
+
+def _v010_function_offsets(data: bytes, image: dict) -> dict:
+    """Decode actual LC_FUNCTION_STARTS ULEB deltas; do not guess boundaries."""
+    fs = image.get('function_starts',{})
+    lc = image.get('load_commands',{}).get('LC_FUNCTION_STARTS',{})
+    mapping = lc.get('file_mapping',{})
+    text = image.get('mappings',{}).get('__TEXT',{})
+    base = text.get('vmaddr')
+    if fs.get('state') != 'delimitado' or mapping.get('state') != 'resolvido' or not isinstance(base,int):
+        return {'state':'limites_de_funcoes_nao_verificaveis','vmaddrs':[],
+                'reason':fs.get('state','comando_ausente')}
+    point, size = mapping['offset'], lc.get('data_size',0)
+    if not _v009_within(point,size,len(data)) or size > 2*1024*1024:
+        return {'state':'tabela_de_funcoes_nao_verificavel','vmaddrs':[]}
+    buf = memoryview(data)[point:point+size]
+    position = 0
+    relative = 0
+    addresses = []
+    try:
+        for _ in range(V010_MAX_FUNCTION_STARTS):
+            if position >= len(buf):
+                return {'state':'tabela_sem_terminador','vmaddrs':[]}
+            delta,position = _abi_uleb(buf,position,len(buf))
+            if delta == 0:
+                if fs.get('count') != len(addresses):
+                    return {'state':'contagem_inconsistente','vmaddrs':[]}
+                return {'state':'limites_lidos','vmaddrs':addresses,'total':len(addresses)}
+            relative += delta
+            if relative > (1<<48):
+                return {'state':'overflow_relativo','vmaddrs':[]}
+            addresses.append(base+relative)
+    except (IndexError,ValueError,OverflowError,struct.error):
+        return {'state':'uleb_invalido','vmaddrs':[]}
+    return {'state':'limite_de_funcoes_excedido','vmaddrs':[]}
+
+
+def _v010_vm_index(scan:dict) -> list[dict]:
+    """Index *validated executable sections*, not entire image ranges."""
+    regions=[]
+    for name,img in scan.get('images',{}).items():
+        for sectname,sec in img.get('sections',{}).items():
+            if not sectname.endswith(',__text'):
+                continue
+            m=sec.get('file_mapping',{})
+            if m.get('state')=='resolvido' and sec.get('size',0)>0:
+                base=sec.get('vmaddr')
+                if isinstance(base,int):
+                    regions.append({'start':base,'end':base+sec['size'],
+                                    'image':name,'section':sectname})
+    return sorted(regions,key=lambda x:(x['start'],x['end'],x['image']))
+
+
+def _v010_resolve_call(vmaddr:int, index:list[dict]) -> dict:
+    matches=[{'image':r['image'],'section':r['section']} for r in index
+             if r['start']<=vmaddr<r['end']]
+    if len(matches)==1:
+        return {'state':'secao_executavel_unica','target':matches[0]}
+    if len(matches)>1:
+        return {'state':'alvo_ambiguo','matching_sections':len(matches)}
+    return {'state':'alvo_nao_localizado_em_secao_mapeada'}
+
+
+def _v010_extract_functions(data:bytes, scan:dict, identifier:str, index:list[dict]) -> dict:
+    img=scan.get('images',{}).get(identifier)
+    result={'identifier':identifier,'status':'imagem_nao_observada',
+            'function_start_status':'indisponivel','functions':[],
+            'instruction_categories':{},'direct_references':[],
+            'notes':[],'limits':{'max_functions':V010_MAX_FNS,'max_instructions_per_function':V010_MAX_INSN_PER_FN}}
+    if not img:
+        return result
+    position=img.get('image_offset')
+    if img.get('cpu_type') != CPU_TYPE_ARM64 or not isinstance(position,int) or data[position:position+4] != MH_MAGIC_64:
+        result['status']='arquitetura_ou_endian_nao_suportado'
+        return result
+    main = _v009_best_text(img)
+    if not main:
+        result['status']='secao_executavel_nao_observada'
+        return result
+    section_name, sec = main
+    mapping = sec.get('file_mapping',{})
+    result['section']=section_name
+    result['section_mapping']=mapping.get('state')
+    if mapping.get('state') != 'resolvido':
+        result['status']='secao_executavel_nao_mapeada'
+        return result
+    size, start = sec['size'],mapping['offset']
+    base_vm=sec['vmaddr']
+    result['section_vmaddr']=base_vm
+    result['section_size']=size
+    if size > V010_MAX_SECTION_BYTES or not _v009_within(start,size,len(data)):
+        result['status']='secao_executavel_excede_limite_de_pesquisa'
+        return result
+    starts=_v010_function_offsets(data,img)
+    result['function_start_status']=starts['state']
+    if starts['state']!='limites_lidos':
+        result['status']='codigo_mapeado_sem_limites_de_funcoes_verificados'
+        result['notes'].append('Nenhuma função foi inferida sem LC_FUNCTION_STARTS válido.')
+        return result
+    selected=sorted(set(x for x in starts['vmaddrs'] if base_vm<=x<base_vm+size and (x-base_vm)%4==0))
+    result['starts_in_section']=len(selected)
+    result['starts_not_in_section']=starts['total']-len(selected)
+    if not selected:
+        result['status']='sem_limites_de_funcoes_na_secao'
+        return result
+    instructions_total=Counter()
+    calls=[]
+    for idx,fnvm in enumerate(selected[:V010_MAX_FNS]):
+        next_vm=selected[idx+1] if idx+1<len(selected) else base_vm+size
+        span=min(max(0,next_vm-fnvm)//4,V010_MAX_INSN_PER_FN)
+        if span <= 0:
+            continue
+        begin=start+fnvm-base_vm
+        categories=[]
+        word_bytes=data[begin:begin+span*4]
+        indirect_calls=0
+        for j in range(span):
+            word=int.from_bytes(word_bytes[j*4:j*4+4],'little')
+            cat,target=_v010_classify(word,fnvm+j*4)
+            categories.append(cat)
+            instructions_total[cat]+=1
+            if cat=='BLR':
+                indirect_calls+=1
+            if cat=='BL' and target is not None and len(calls)<V010_MAX_REFERENCES_PER_IMAGE:
+                calls.append({'from_function':hex(fnvm),'at_vmaddr':hex(fnvm+j*4),
+                              'target_vmaddr':hex(target), **_v010_resolve_call(target,index)})
+        seq='|'.join(categories)
+        hist=Counter(categories)
+        grams=sorted(set(seq.split('|')[i]+'_'+seq.split('|')[i+1] for i in range(len(categories)-1)))
+        result['functions'].append({'vmaddr':hex(fnvm),'instruction_count':span,
+            'span_bytes_declared':next_vm-fnvm,
+            'truncated_inspection':(next_vm-fnvm)>V010_MAX_INSN_PER_FN*4,
+            'sha256_raw':hashlib.sha256(word_bytes).hexdigest(),
+            'sha256_opcode_classes':hashlib.sha256(seq.encode()).hexdigest(),
+            'opcode_sequence':categories if span<=80 else categories[:80],
+            'opcode_sequence_truncated':span>80,
+            'categories':dict(hist),'adjacent_category_pairs':grams[:128],
+            'indirect_calls_without_target':indirect_calls})
+    result['status']='instrucoes_e_limites_observados'
+    result['functions_found']=len(result['functions'])
+    result['functions_limit_reached']=len(selected)>V010_MAX_FNS
+    result['instruction_categories']=dict(instructions_total)
+    result['direct_references']=calls
+    result['direct_references_limit_reached']=len(calls)>=V010_MAX_REFERENCES_PER_IMAGE
+    result['notes']=['Somente chamadas BL com deslocamento imediato são relacionadas a endereços.',
+       'Chamadas BLR/indiretas, PAC, vtables e ABI C++ não são resolvidas por esse método.',
+       'Offsets de funções dependem de LC_FUNCTION_STARTS e de uma seção executável mapeada.',
+       'Um limite de função ou assinatura de opcodes não prova semântica/ABI.']
+    return result
+
+
+def _v010_analyze_kernel(path:str|Path, structural_scan:dict, labels:tuple[str,...]=V010_FOCUS) -> dict:
+    p=Path(path).expanduser().resolve()
+    if p.stat().st_size>MAX_INPUT:
+        raise KernelFormatError('Arquivo excede o tamanho máximo permitido.')
+    data,fmt,notes=_unwrap(p.read_bytes())
+    if len(data)>MAX_DECODED:
+        raise KernelFormatError('Kernelcache decodificado excede o limite.')
+    idx=_v010_vm_index(structural_scan)
+    items={name:_v010_extract_functions(data,structural_scan,name,idx) for name in labels}
+    return {'status':'analisado','format':fmt,'decoded_bytes':len(data),
+            'parser_notes':notes,'images':items,
+            'indexed_executable_sections':len(idx)}
+
+
+def _v010_similarity(a:dict,b:dict) -> dict:
+    af=a.get('functions',[])
+    bf=b.get('functions',[])
+    if not af or not bf:
+        return {'status':'funcoes_nao_observadas_em_ambos','source_functions':len(af),
+                'target_functions':len(bf),'candidates':[]}
+    # Candidate generation is deliberately bounded: only identical normalized
+    # code-class sequences or similar lengths and shared category bigrams.
+    buckets={}
+    by_size={}
+    for j,f in enumerate(bf):
+        buckets.setdefault(f['sha256_opcode_classes'],[]).append(j)
+        by_size.setdefault(f['instruction_count']//8,[]).append(j)
+    raw={}
+    for j,f in enumerate(bf):
+        raw.setdefault(f['sha256_raw'],[]).append(j)
+    proposals=[]
+    for i,f in enumerate(af):
+        exact = raw.get(f['sha256_raw'],[])
+        normalized = buckets.get(f['sha256_opcode_classes'],[])
+        if exact and len(exact)==1:
+            proposals.append((1.0,'bytes_identicos',i,exact[0]))
+        elif normalized and len(normalized)==1 and f['instruction_count']>=6:
+            proposals.append((0.94,'categorias_de_instrucoes_iguais',i,normalized[0]))
+        elif 12<=f['instruction_count']<=V010_MAX_INSN_PER_FN:
+            options=[]
+            n=f['instruction_count']
+            eligible=[]
+            for band in range(max(0,(n-max(4,n//10))//8), (n+max(4,n//10))//8+1):
+                eligible.extend(by_size.get(band,[]))
+            for j in eligible:
+                g=bf[j]
+                n,m=f['instruction_count'],g['instruction_count']
+                if m<12 or abs(n-m)>max(4,n//10):
+                    continue
+                agrams=set(f['adjacent_category_pairs'])
+                bgrams=set(g['adjacent_category_pairs'])
+                if len(agrams)<3 or len(bgrams)<3:
+                    continue
+                jc=len(agrams&bgrams)/max(1,len(agrams|bgrams))
+                score=.6*jc+.4*(1-abs(n-m)/max(n,m))
+                if score>=.90:
+                    options.append((score,j))
+            if options:
+                options.sort(reverse=True)
+                if len(options)==1 or options[0][0]-options[1][0]>=0.08:
+                    proposals.append((options[0][0],'semelhanca_estrutural',i,options[0][1]))
+    # One-to-one and no ambiguous assertion: don't report collisions as pairs.
+    props=sorted(proposals,key=lambda t:(-t[0],t[2],t[3]))
+    matched_a=set();matched_b=set();candidates=[]
+    for score,method,i,j in props:
+        if i in matched_a or j in matched_b:
+            continue
+        matched_a.add(i);matched_b.add(j)
+        candidates.append({'origin_vmaddr':af[i]['vmaddr'], 'target_vmaddr':bf[j]['vmaddr'],
+                           'method':method,'structural_similarity':round(score,3),
+                           'instructions_origin':af[i]['instruction_count'],
+                           'instructions_target':bf[j]['instruction_count'],
+                           'caution':'Semelhança de código não comprova equivalência funcional ou ABI.'})
+        if len(candidates)>=V010_MAX_MATCHES_PER_PAIR:
+            break
+    return {'status':'candidatos_estruturais','source_functions':len(af),
+            'target_functions':len(bf),'candidates':candidates,
+            'limit_reached':len(candidates)>=V010_MAX_MATCHES_PER_PAIR}
+
+
+def _v010_make_function_report(results:dict[str,dict], errors:dict)->dict:
+    summary={}
+    for label,scan in results.items():
+        images=scan.get('images',{})
+        summary[label]={'drivers_analyzed':len(images),
+            'drivers_with_functions':sum(x.get('functions_found',0)>0 for x in images.values()),
+            'functions_observed':sum(len(x.get('functions',[])) for x in images.values()),
+            'direct_call_sites_observed':sum(len(x.get('direct_references',[])) for x in images.values())}
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+       'mode':'Leitura estática e limitada de instruções ARM64 baseada em LC_FUNCTION_STARTS',
+       'summary':summary,'errors':errors,'scans':results,
+       'limitations':['As instruções não são uma reconstrução completa da arquitetura ARM64/ARM64e.',
+          'Não identifica imports, vtables ou métodos C++ sem evidência adicional.',
+          'Sem LC_FUNCTION_STARTS verificável não inventa limites de funções.',
+          'Referências por BL imediato não demonstram um contrato ABI entre KEXTs.']}
+
+
+def _v010_make_similarity(results:dict[str,dict])->dict:
+    relations=(('ORIGEM','CONTROLE'),('CONTROLE','DESTINO'),('ORIGEM','DESTINO'))
+    rows=[]
+    for a,b in relations:
+        if a not in results or b not in results:
+            continue
+        for name in V010_FOCUS:
+            left=results[a]['images'].get(name,{})
+            right=results[b]['images'].get(name,{})
+            rows.append({'pair':a+' ↔ '+b,'source_driver':name,'target_driver':name,
+                         'comparison':_v010_similarity(left,right)})
+        if a=='ORIGEM':
+            rows.append({'pair':a+' ↔ '+b,'source_driver':'com.apple.AGXG11P',
+                'target_driver':'com.apple.AGXG12P',
+                'comparison':_v010_similarity(results[a]['images'].get('com.apple.AGXG11P',{}),
+                                               results[b]['images'].get('com.apple.AGXG12P',{}))})
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+       'mode':'semelhança de funções candidatas; sem prova de equivalência',
+       'pairwise_comparisons':rows,
+       'summary':{'pairs_checked':len(rows),
+                  'candidate_correspondences':sum(len(x['comparison']['candidates']) for x in rows)},
+       'limitations':['Comparações por opcode classes têm colisões e dependem de limites corretos.',
+                      'Otimização, inlining e PAC podem alterar o aspecto do código.',
+                      'As correspondências são apenas pistas para revisão manual.']}
+
+
+def _v010_make_interface_report(results:dict[str,dict], port:dict|None=None)->dict:
+    drivers=[]
+    for ident in ('com.apple.AGXG11P','com.apple.iokit.IOGPUFamily','com.apple.iokit.IOSurface'):
+        reports={}
+        for label,scan in results.items():
+            img=scan['images'].get(ident,{})
+            counts=Counter()
+            examples=[]
+            for call in img.get('direct_references',[]):
+                target=call.get('target',{}).get('image')
+                if target:
+                    counts[target]+=1
+                    if len(examples)<12:
+                        examples.append(call)
+            reports[label]={'status':img.get('status','indisponivel'),
+                 'functions_observed':len(img.get('functions',[])),
+                 'direct_call_sites':len(img.get('direct_references',[])),
+                 'resolved_targets_by_image':dict(counts),
+                 'example_direct_calls':examples,
+                 'indirect_references_not_resolved':sum(f.get('indirect_calls_without_target',0)
+                                                 for f in img.get('functions',[]))}
+        drivers.append({'identifier':ident,'by_firmware':reports,
+            'interface_contract_state':'nao_demonstrado',
+            'gaps':['Chamadas indiretas e vtables não reconstruídas.',
+                    'Layouts de classes C++ e argumentos das funções não verificados.',
+                    'Chamadas BL identificadas por seção não são prova de importação da KEXT.']})
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+          'mode':'indícios estruturais de referências entre imagens',
+          'drivers':drivers,
+          'limitations':['A atribuição do alvo requer uma única seção executável mapeada.',
+             'BL direto não prova vínculo de driver em tempo de execução.',
+             'A compatibilidade com o kernel recente permanece inconclusiva.']}
+
+
+def _v010_make_gaps(results:dict[str,dict], ports:dict|None=None)->dict:
+    rows=[]
+    for ident in ('com.apple.AGXG11P','com.apple.iokit.IOGPUFamily','com.apple.iokit.IOSurface'):
+        by={lbl:data['images'].get(ident,{}).get('status','nao_disponivel') for lbl,data in results.items()}
+        rows.append({'driver':ident,'binary_inspection_by_firmware':by,
+          'function_evidence':'observada_parcialmente' if any(data['images'].get(ident,{}).get('functions')
+                                     for data in results.values()) else 'nao_recuperada',
+          'declared_dependencies':'consulte_IOSLA_PORTABILIDADE',
+          'interface_contract':'nao_demonstrado',
+          'iokit_runtime':'nao_verificado',
+          'firmware_compatibility':'nao_verificada',
+          'integrity_and_boot':'nao_verificados'})
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+       'mode':'lacunas e evidências, sem pontuação de viabilidade',
+       'drivers':rows,'limitations':['Lacunas não são provas automáticas de incompatibilidade.',
+                          'Nenhum driver é adaptado, injetado ou carregado.']}
+
+
+def _v010_compact_md(report:dict)->str:
+    mode=report.get('mode','')
+    lines=[f'# IOSLA v{APP_VERSION} — {mode}','','**Investigação estática, somente leitura; nenhuma ABI ou port comprovado.**','']
+    if 'summary' in report:
+        lines+=['## Resumo','', '```json',json.dumps(report['summary'],ensure_ascii=False,indent=2),'```','']
+    if 'scans' in report:
+        for label,scan in report['scans'].items():
+            lines +=[f'## Firmware: {label}','']
+            for name,img in scan.get('images',{}).items():
+                counts=img.get('instruction_categories',{})
+                lines += [f'- `{name}` — **{img["status"]}**; '+str(len(img.get('functions',[])))+
+                          ' funções; '+str(len(img.get('direct_references',[])))+' referências BL; '+
+                          'instruções: '+', '.join(f'{k}={v}' for k,v in sorted(counts.items()))]
+            lines+=['']
+    if 'pairwise_comparisons' in report:
+        lines+=['## Comparações estruturais','']
+        for row in report['pairwise_comparisons']:
+            d=row['comparison']
+            lines +=[f'- **{row["pair"]}** — `{row["source_driver"]}` → `{row["target_driver"]}`: '+
+                     f'{len(d["candidates"])} candidatos, estado `{d["status"]}`']
+        lines+=['']
+    if 'drivers' in report:
+        lines+=['## Componentes investigados','']
+        for d in report['drivers']:
+            lines +=[f'### `{d["identifier"] if "identifier" in d else d["driver"]}`','',
+                     '```json',json.dumps(d,ensure_ascii=False,indent=2)[:9000],'```','']
+    if report.get('errors'):
+        lines+=['## Falhas de leitura','',json.dumps(report['errors'],ensure_ascii=False,indent=2),'']
+    lines+=['## Limitações','']+['- '+x for x in report.get('limitations',[])]+['']
+    return '\n'.join(lines)
+
+
+_v010_old_analyze = Terminal.analyze
+
+
+def _v010_terminal_analyze(self):
+    _v010_old_analyze(self)
+    scans=getattr(self,'v008_scans',{})
+    observations={}
+    errors={}
+    print('\n  [FUNC] Leitura estrutural ARM64/ARM64e (somente leitura)...')
+    for label in ('ORIGEM','CONTROLE','DESTINO'):
+        snapshot=self.snapshots.get(label)
+        if not snapshot or not snapshot.kernel_path or label not in scans:
+            errors[label]='Kernelcache não interpretável ou não informado.'
+            continue
+        try:
+            observations[label]=_v010_analyze_kernel(snapshot.kernel_path,scans[label])
+            total=sum(len(item.get('functions',[])) for item in observations[label]['images'].values())
+            print('  [FUNC]',label,':',total,'funções com limites verificados nos componentes prioritários.')
+        except (KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+            errors[label]=str(exc)
+            print('  [FUNC]',label,':',errors[label])
+    reports=[('FUNCOES',_v010_make_function_report(observations,errors)),
+             ('SIMILARIDADE',_v010_make_similarity(observations)),
+             ('INTERFACES',_v010_make_interface_report(observations,getattr(self,'v008_port',None))),
+             ('COMPATIBILITY_GAPS',_v010_make_gaps(observations,getattr(self,'v008_port',None)))]
+    for key,report in reports:
+        files=_v008_export(key,report,_v010_compact_md)
+        _v008_add_summary(self,'research_'+key.lower(),files,report.get('summary',{'drivers':len(report.get('drivers',[]))}))
+        print('  [FUNC] Relatório:',files[1].name)
+    self.v010_observations=observations
+    print('  [INFO] Associações de funções são evidências estruturais, NÃO uma ABI validada.')
+
+
+Terminal.analyze=_v010_terminal_analyze
+
+
+_v010_old_main=main
+
+
+def _v010_synthetic_image(version:int) -> tuple[bytes,dict]:
+    """Mach-O file with split __TEXT_EXEC and valid LC_FUNCTION_STARTS."""
+    blob=bytearray(12000)
+    def seg(name,vm,off,size,sect=False):
+        sections=b''
+        if sect:
+            sections=struct.pack('<16s16sQQIIIIIIII',b'__text'.ljust(16,b'\0'),
+                     name.encode().ljust(16,b'\0'),vm,size,off,2,0,0,0x80000400,0,0,0)
+        return struct.pack('<II16sQQQQiiII',LC_SEGMENT_64,72+len(sections),
+                     name.encode().ljust(16,b'\0'),vm,size,off,size,7,5,int(sect),0)+sections
+    a=seg('__TEXT',0x100000,0,512)
+    b=seg('__TEXT_EXEC',0x100100,4096,128,True)
+    c=seg('__LINKEDIT',0x200000,8192,128)
+    starts=bytes([0x80,0x02,16,16,0]) # code starts at __TEXT+0x100, +16, +16
+    lc=struct.pack('<IIII',V008_LC_FUNCTION_STARTS,16,8192,len(starts))
+    h=struct.pack('<IiiIIIII',0xfeedfacf,CPU_TYPE_ARM64,0,0xc,4,len(a+b+c+lc),0,0)
+    blob[:len(h+a+b+c+lc)]=h+a+b+c+lc
+    blob[8192:8192+len(starts)]=starts
+    # Three valid functions with 4 ARM64 instructions each; v2 changes one ALU instruction.
+    words=[0x94000004,0xd503233f,0xd503201f,0xd65f03c0,
+           0x94000004,0xd503201f,0x91000400 if version==1 else 0x91000800,0xd65f03c0,
+           0xd503201f,0xd503201f,0xd503201f,0xd65f03c0]
+    for i,w in enumerate(words):
+        struct.pack_into('<I',blob,4096+4*i,w)
+    image=_v009_scan_image(bytes(blob),'com.apple.AGXG11P',0,len(blob))
+    assert image['status']=='macho_lido', image
+    return bytes(blob), {'images':{'com.apple.AGXG11P':image},'format':'synthetic'}
+
+
+def _v010_self_test():
+    import tempfile
+    d,scan=_v010_synthetic_image(1)
+    d2,scan2=_v010_synthetic_image(2)
+    # Manually verify core instruction disambiguation, including signed branches.
+    assert _v010_classify(0x94000001,0x1000)==('BL',0x1004)
+    assert _v010_classify(0x17ffffff,0x1000)==('B',0xffc)
+    assert _v010_classify(0xd65f03c0,0x1000)[0]=='RET'
+    assert _v010_classify(0xd63f0000,0x1000)[0]=='BLR'
+    one=_v010_extract_functions(d,scan,'com.apple.AGXG11P',_v010_vm_index(scan))
+    two=_v010_extract_functions(d2,scan2,'com.apple.AGXG11P',_v010_vm_index(scan2))
+    assert one['status']=='instrucoes_e_limites_observados',one
+    assert len(one['functions'])==3,one
+    assert len(one['direct_references'])==2,one
+    assert one['functions'][1]['sha256_raw']!=two['functions'][1]['sha256_raw']
+    assert _v010_similarity(one,two)['status']=='candidatos_estruturais'
+    # No LC_FUNCTION_STARTS: image is still readable, but never invent functions.
+    nofs={'images':{'com.apple.AGXG11P':{**scan2['images']['com.apple.AGXG11P'],
+                      'function_starts':{'state':'comando_ausente'}}}}
+    missing=_v010_extract_functions(d2,nofs,'com.apple.AGXG11P',_v010_vm_index(nofs))
+    assert len(missing['functions'])==0 and missing['status']=='codigo_mapeado_sem_limites_de_funcoes_verificados'
+    analyzed={'ORIGEM':{'images':{'com.apple.AGXG11P':one}},
+              'DESTINO':{'images':{'com.apple.AGXG11P':two}}}
+    with tempfile.TemporaryDirectory(prefix='iosla010_') as td:
+        for name,rep in [('FUNCOES',_v010_make_function_report(analyzed,{})),
+                         ('SIMILARIDADE',_v010_make_similarity(analyzed)),
+                         ('INTERFACES',_v010_make_interface_report(analyzed)),
+                         ('COMPATIBILITY_GAPS',_v010_make_gaps(analyzed))]:
+            a,b=_v008_export(name,rep,_v010_compact_md,Path(td))
+            assert a.is_file() and b.is_file()
+            assert json.loads(a.read_text())['iosla_version']==APP_VERSION
+    print('IOSLA v0.0.10: instruções ARM64, funções, chamadas diretas, similaridade e relatórios OK.')
+
+
+def main():
+    if len(sys.argv)==2 and sys.argv[1]=='--self-test':
+        _v008_original_main()
+        _v009_self_test()
+        _v010_self_test()
+        return
+    if len(sys.argv)>=4 and sys.argv[1]=='--functions-from-kernels' and len(sys.argv) in (4,5):
+        ensure_home()
+        paths={'ORIGEM':sys.argv[2],'DESTINO':sys.argv[3]}
+        if len(sys.argv)==5:
+            paths['CONTROLE']=sys.argv[4]
+        scans={}
+        results={}
+        errors={}
+        for label,path in paths.items():
+            try:
+                scans[label]=_v009_scan_kernel(path)
+                results[label]=_v010_analyze_kernel(path,scans[label])
+            except (KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+                errors[label]=str(exc)
+        for key,report in [('FUNCOES',_v010_make_function_report(results,errors)),
+                           ('SIMILARIDADE',_v010_make_similarity(results)),
+                           ('INTERFACES',_v010_make_interface_report(results)),
+                           ('COMPATIBILITY_GAPS',_v010_make_gaps(results))]:
+            a,b=_v008_export(key,report,_v010_compact_md)
+            print(key,':',b)
+        return
+    _v010_old_main()
+
+
+
+# ==========================================================================
+# IOSLA v0.0.11 — ABI CALL-TARGET CONTINUITY & GPU COMPATIBILITY RESEARCH
+# Local, offline, observational. No driver modification, signing or loading.
+# ==========================================================================
+
+import bisect
+
+V011_FOCUS = ('com.apple.AGXG11P','com.apple.AGXG12P',
+              'com.apple.iokit.IOGPUFamily','com.apple.iokit.IOSurface',
+              'com.apple.driver.AppleARMPlatform')
+V011_TARGET_LIBRARIES = ('com.apple.iokit.IOGPUFamily','com.apple.iokit.IOSurface')
+V011_MAX_FN_PER_IMAGE = 25000
+V011_MAX_INSN_PER_FN = 1024
+V011_MAX_REFS_PER_IMAGE = 25000
+V011_MAX_TARGETS = 5000
+V011_MAX_CANDIDATES = 4
+V011_MAX_BLOB_BYTES = 32*1024*1024
+
+
+def _v011_empty(name: str, status: str) -> dict:
+    return {'identifier':name,'status':status,'functions':[], 'direct_calls':[],
+            'limits':{'max_functions':V011_MAX_FN_PER_IMAGE,
+                      'max_instructions_per_function':V011_MAX_INSN_PER_FN,
+                      'max_stored_direct_calls':V011_MAX_REFS_PER_IMAGE},
+            'coverage':{'starts_in_section':0,'functions_indexed':0,'calls_stored':0,
+                        'functions_truncated':False,'references_truncated':False},
+            'opcode_categories':{},'indirect_calls':0,'pac_instructions':0,'notes':[]}
+
+
+def _v011_index_intervals(scan: dict) -> tuple[list[int],list[dict]]:
+    regions=_v010_vm_index(scan)
+    return [r['start'] for r in regions],regions
+
+
+def _v011_find_region(addr: int, starts: list[int], regions: list[dict]) -> dict:
+    i=bisect.bisect_right(starts,addr)-1
+    # Both overlapping regions and non-overlapping are possible in malformed filesets;
+    # don't silently pick one when the validated map overlaps.
+    matches=[]
+    for j in range(i, -1, -1):
+        r=regions[j]
+        if r['start']<=addr<r['end']:
+            matches.append(r)
+    if len(matches)==1:
+        return {'state':'secao_executavel_unica','image':matches[0]['image'],
+                'section':matches[0]['section']}
+    if len(matches)>1:
+        return {'state':'regioes_executaveis_sobrepostas','matches':len(matches)}
+    return {'state':'destino_nao_mapeado'}
+
+
+def _v011_examine_image(data: bytes, structural_scan:dict, name:str,
+                        region_starts:list[int], regions:list[dict]) -> dict:
+    img=structural_scan.get('images',{}).get(name)
+    if not img:
+        return _v011_empty(name,'imagem_nao_observada')
+    if img.get('cpu_type')!=CPU_TYPE_ARM64:
+        return _v011_empty(name,'arquitetura_nao_suportada')
+    main=_v009_best_text(img)
+    if not main:
+        return _v011_empty(name,'secao_executavel_nao_mapeada')
+    section_name,sec=main
+    mapping=sec.get('file_mapping',{})
+    if mapping.get('state')!='resolvido':
+        return _v011_empty(name,'mapeamento_executavel_inconclusivo')
+    base=sec.get('vmaddr')
+    off,size=mapping.get('offset'),sec.get('size')
+    if not isinstance(base,int) or not _v009_within(off,size,len(data)) or size>V011_MAX_BLOB_BYTES:
+        return _v011_empty(name,'secao_nao_validada_ou_grande_demais')
+    starts=_v010_function_offsets(data,img)
+    if starts['state']!='limites_lidos':
+        obj=_v011_empty(name,'limites_nao_disponiveis')
+        obj['notes'].append(starts['state'])
+        return obj
+    selected=sorted(set(x for x in starts['vmaddrs'] if base<=x<base+size and (x-base)%4==0))
+    if not selected:
+        return _v011_empty(name,'nenhuma_funcao_na_secao')
+    selected_len=len(selected)
+    res=_v011_empty(name,'funcoes_e_chamadas_indexadas')
+    res['section']=section_name
+    res['section_vmaddr']=hex(base)
+    res['section_size']=size
+    histogram=Counter()
+    calls=[]
+    indirect=0
+    capped_fn=0
+    total_bl_calls=0
+    for i,vm in enumerate(selected[:V011_MAX_FN_PER_IMAGE]):
+        end=selected[i+1] if i+1<selected_len else base+size
+        full_insn=max(0,(end-vm)//4)
+        count=min(full_insn,V011_MAX_INSN_PER_FN)
+        if count<=0:
+            continue
+        if full_insn>count:
+            capped_fn+=1
+        start=off+(vm-base)
+        part=memoryview(data)[start:start+count*4]
+        cats=[]
+        cc=Counter()
+        seen_bl=0
+        seen_blr=0
+        seen_pac=0
+        direct_targets=[]
+        for j in range(count):
+            word=int.from_bytes(part[j*4:j*4+4], 'little')
+            cat,target=_v010_classify(word,vm+j*4)
+            cats.append(cat); cc[cat]+=1; histogram[cat]+=1
+            if cat=='PAC':seen_pac+=1
+            if cat=='BLR':seen_blr+=1
+            if cat=='BL' and target is not None:
+                seen_bl+=1
+                total_bl_calls+=1
+                hit=_v011_find_region(target,region_starts,regions)
+                # Summarize all inspected instructions, store bounded references.
+                if len(calls)<V011_MAX_REFS_PER_IMAGE:
+                    call={'from_function':hex(vm),'site':hex(vm+j*4),'target_vmaddr':hex(target),**hit}
+                    calls.append(call)
+                if len(direct_targets)<32:
+                    direct_targets.append(hit.get('image','nao_resolvido'))
+        indirect+=seen_blr
+        # A normalized sequence is heuristic; preserve SHA of raw bytes separately.
+        classes='|'.join(cats)
+        grams=sorted(set(a+'>'+b for a,b in zip(cats,cats[1:])))
+        res['functions'].append({
+            'vmaddr':hex(vm),'end_vmaddr':hex(end),'span_bytes':end-vm,
+            'instructions_scanned':count,'truncated':full_insn>count,
+            'raw_sha256':hashlib.sha256(part).hexdigest(),
+            'opcode_sha256':hashlib.sha256(classes.encode()).hexdigest(),
+            'opcode_histogram':dict(cc),'opcode_bigrams':grams[:80],
+            'direct_calls_seen':seen_bl,'indirect_calls_seen':seen_blr,
+            'pac_seen':seen_pac,'target_image_examples':direct_targets})
+    cov=res['coverage']
+    cov.update({'starts_in_section':selected_len,'functions_indexed':len(res['functions']),
+          'functions_truncated':selected_len>V011_MAX_FN_PER_IMAGE,
+          'functions_with_instruction_limit':capped_fn,
+          'calls_stored':len(calls),
+          'calls_observed_in_instructions':total_bl_calls,
+          'references_truncated':total_bl_calls>V011_MAX_REFS_PER_IMAGE,
+          'function_start_source':'LC_FUNCTION_STARTS'})
+    res['direct_calls']=calls
+    res['indirect_calls']=indirect
+    res['pac_instructions']=histogram['PAC']
+    res['opcode_categories']=dict(histogram)
+    res['notes']=['BL aponta a uma região de código; não define tipo, nome nem protótipo.',
+                  'BLR e acessos C++ indiretos não são resolvidos por este leitor limitado.',
+                  'Funções maiores que o limite têm inspeção truncada e não são equivalência comprovada.']
+    return res
+
+
+def _v011_analyze_kernel(path:str|Path, structural:dict) -> dict:
+    p=Path(path).expanduser().resolve()
+    if p.stat().st_size>MAX_INPUT:
+        raise KernelFormatError('Kernelcache maior que o limite permitido.')
+    data,fmt,notes=_unwrap(p.read_bytes())
+    if len(data)>MAX_DECODED:
+        raise KernelFormatError('Kernelcache decodificado excede o limite.')
+    region_starts,regions=_v011_index_intervals(structural)
+    images={name:_v011_examine_image(data,structural,name,region_starts,regions)
+            for name in V011_FOCUS}
+    return {'format':fmt,'decoded_bytes':len(data),
+            'images':images,'validated_executable_regions':len(regions),
+            'parser_notes':notes}
+
+
+def _v011_function_lookup(image:dict) -> tuple[list[int],list[dict]]:
+    functions=image.get('functions',[])
+    pairs=sorted((int(f['vmaddr'],16),f) for f in functions)
+    return [x[0] for x in pairs],[x[1] for x in pairs]
+
+
+def _v011_owning_function(addr:int,starts:list[int],functions:list[dict])->dict|None:
+    i=bisect.bisect_right(starts,addr)-1
+    if i<0:
+        return None
+    f=functions[i]
+    return f if addr<int(f['end_vmaddr'],16) else None
+
+
+def _v011_build_match_index(image:dict)->dict:
+    functions=image.get('functions',[])
+    by_raw={}; by_opcode={}; by_band={}
+    for f in functions:
+        by_raw.setdefault(f['raw_sha256'],[]).append(f)
+        by_opcode.setdefault(f['opcode_sha256'],[]).append(f)
+        by_band.setdefault(f['instructions_scanned']//8,[]).append(f)
+    return {'raw':by_raw,'opcode':by_opcode,'bands':by_band,'n':len(functions)}
+
+
+def _v011_match_function(f:dict|None,idx:dict|None)->dict:
+    if f is None or idx is None or not idx.get('n'):
+        return {'state':'dados_insuficientes','candidates':[]}
+    n=f['instructions_scanned']
+    if f.get('truncated') or n<8:
+        return {'state':'funcao_curta_ou_truncada','candidates':[]}
+    raw=idx['raw'].get(f['raw_sha256'],[])
+    if len(raw)==1 and not raw[0].get('truncated'):
+        return {'state':'bytes_identicos_unicos','candidates':[
+            {'vmaddr':raw[0]['vmaddr'],'method':'bytes_identicos','score':1.0}]}
+    if len(raw)>1:
+        return {'state':'bytes_iguais_multiplos_candidatos','candidates':[
+            {'vmaddr':g['vmaddr'],'method':'bytes_identicos','score':1.0}
+            for g in raw[:V011_MAX_CANDIDATES]]}
+    norm=idx['opcode'].get(f['opcode_sha256'],[])
+    if n>=14 and len(norm)==1 and not norm[0].get('truncated') and len(f['opcode_histogram'])>=4:
+        return {'state':'estrutura_candidata_unica','candidates':[
+            {'vmaddr':norm[0]['vmaddr'],'method':'padrao_opcode','score':0.92}]}
+    if len(norm)>1:
+        return {'state':'padrao_ambiguo','candidates':[
+            {'vmaddr':g['vmaddr'],'method':'padrao_opcode','score':0.90}
+            for g in norm[:V011_MAX_CANDIDATES]]}
+    # More selective than 0.0.10: use histogram overlap, length, and bigram overlap.
+    half=max(4,int(n*.08)); selected=[]
+    lower=max(0,(n-half)//8); upper=(n+half)//8
+    for band in range(lower,upper+1):
+        selected.extend(idx['bands'].get(band,[]))
+    options=[]
+    for g in selected[:1200]:
+        m=g['instructions_scanned']
+        if g.get('truncated') or m<10 or abs(n-m)>half:
+            continue
+        a,b=set(f['opcode_bigrams']),set(g['opcode_bigrams'])
+        if len(a)<5 or len(b)<5:
+            continue
+        jacc=len(a&b)/max(1,len(a|b))
+        h1,h2=f['opcode_histogram'],g['opcode_histogram']
+        allcats=set(h1)|set(h2)
+        hist=1-sum(abs(h1.get(k,0)/n-h2.get(k,0)/m) for k in allcats)/2
+        score=.43*jacc+.32*hist+.25*(1-abs(n-m)/max(n,m))
+        if score>=.88:
+            options.append((score,g))
+    options.sort(key=lambda t:(-t[0],t[1]['vmaddr']))
+    if options and (len(options)==1 or options[0][0]-options[1][0]>=.08):
+        return {'state':'estrutura_candidata_unica','candidates':[
+            {'vmaddr':options[0][1]['vmaddr'],'method':'histograma_e_fluxo_aproximado',
+             'score':round(options[0][0],3)}]}
+    if options:
+        return {'state':'estrutura_ambigua','candidates':[
+            {'vmaddr':g['vmaddr'],'method':'histograma_e_fluxo_aproximado','score':round(s,3)}
+            for s,g in options[:V011_MAX_CANDIDATES]]}
+    return {'state':'sem_correspondencia_observada','candidates':[]}
+
+
+def _v011_target_calls(results:dict)->tuple[list[dict],dict]:
+    old=results.get('ORIGEM',{}).get('images',{}).get('com.apple.AGXG11P',{})
+    libs=results.get('ORIGEM',{}).get('images',{})
+    hits={}; skipped=Counter()
+    bylib={lib:_v011_function_lookup(libs.get(lib,{})) for lib in V011_TARGET_LIBRARIES}
+    calls=old.get('direct_calls',[])
+    for call in calls:
+        lib=call.get('image')
+        if lib not in V011_TARGET_LIBRARIES or call.get('state')!='secao_executavel_unica':
+            continue
+        addr=int(call['target_vmaddr'],16)
+        starts,funcs=bylib[lib]
+        fn=_v011_owning_function(addr,starts,funcs)
+        if fn is None:
+            skipped['endereco_sem_funcao_verificada']+=1
+            continue
+        key=(lib,fn['vmaddr'])
+        if key not in hits:
+            hits[key]={'library':lib,'function_vmaddr':fn['vmaddr'],
+                'call_count':0,'callers':set(),'examples':[], 'target_function':fn}
+        row=hits[key]
+        row['call_count']+=1
+        row['callers'].add(call['from_function'])
+        if len(row['examples'])<3:
+            row['examples'].append({'site':call['site'],'destination':call['target_vmaddr']})
+    ordered=sorted(hits.values(),key=lambda x:(-x['call_count'],x['library'],x['function_vmaddr']))
+    cut=ordered[V011_MAX_TARGETS:]
+    rows=[]
+    for h in ordered[:V011_MAX_TARGETS]:
+        rows.append({'library':h['library'],'function_vmaddr':h['function_vmaddr'],
+           'call_count':h['call_count'],'unique_callers':len(h['callers']),
+           'examples':h['examples'],'target_function':h['target_function']})
+    stat={'source_direct_calls_stored':len(calls),
+          'source_direct_calls_truncated':old.get('coverage',{}).get('references_truncated',False),
+          'source_function_index_truncated':old.get('coverage',{}).get('functions_truncated',False),
+          'targets_identified':len(ordered),'targets_reported':len(rows),
+          'targets_omitted_by_limit':len(cut), 'nonfunction_destinations':dict(skipped),
+          'calls_to_reported_targets':sum(x['call_count'] for x in rows)}
+    return rows,stat
+
+
+def _v011_continuity(results:dict)->tuple[dict,dict]:
+    targets,stats=_v011_target_calls(results)
+    lookup={}
+    function_by_vm={}
+    for label in ('CONTROLE','DESTINO'):
+        for lib in V011_TARGET_LIBRARIES:
+            img=results.get(label,{}).get('images',{}).get(lib,{})
+            lookup[(label,lib)]=_v011_build_match_index(img)
+            function_by_vm[(label,lib)]={f['vmaddr']:f for f in img.get('functions',[])}
+    rows=[]
+    states=Counter()
+    for row in targets:
+        lib=row['library']; f=row['target_function']
+        ab=_v011_match_function(f,lookup.get(('CONTROLE',lib)))
+        ac=_v011_match_function(f,lookup.get(('DESTINO',lib)))
+        bc={'state':'nao_calculado','candidates':[]}
+        if len(ab['candidates'])==1 and ab['state'] in ('bytes_identicos_unicos','estrutura_candidata_unica'):
+            bm=function_by_vm[('CONTROLE',lib)].get(ab['candidates'][0]['vmaddr'])
+            bc=_v011_match_function(bm,lookup.get(('DESTINO',lib)))
+        chain_state='inconclusiva'
+        if len(ab['candidates'])==1 and len(bc['candidates'])==1:
+            chain_state='caminho_estrutural_candidato'
+            if len(ac['candidates'])==1 and ac['candidates'][0]['vmaddr']!=bc['candidates'][0]['vmaddr']:
+                chain_state='correspondentes_divergentes_ou_ambiguos'
+        if ab['state']=='bytes_identicos_unicos' and bc['state']=='bytes_identicos_unicos':
+            chain_state='bytes_conservados_nos_dois_passos'
+        states[chain_state]+=1
+        rows.append({'library':lib,'origin_target_function':row['function_vmaddr'],
+            'calls_from_agxg11p':row['call_count'], 'origin_unique_callers':row['unique_callers'],
+            'callsite_examples':row['examples'],
+            'source_fingerprint':{'raw_sha256':f['raw_sha256'],
+                                  'opcode_sha256':f['opcode_sha256'],
+                                  'instructions_scanned':f['instructions_scanned'],
+                                  'truncated':f['truncated']},
+            'a_to_b':ab,'a_to_c':ac,'b_to_c':bc,'triangulation_state':chain_state,
+            'abi_contract':'nao_demonstrado'})
+    summary={**stats,'triangulation_states':dict(states),
+             'reported_targets_by_library':dict(Counter(r['library'] for r in rows)),
+             'with_unique_A_C_candidate':sum(len(r['a_to_c']['candidates'])==1 and
+                 r['a_to_c']['state'] in ('bytes_identicos_unicos','estrutura_candidata_unica') for r in rows)}
+    base={'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+          'mode':'rastreabilidade de alvos BL do AGXG11P e continuidade estrutural observacional',
+          'summary':summary,'targets':rows,
+          'limitations':['Comparações A↔B usam builds diferentes do iOS 18.',
+             'Pares de funções são candidatos; bytes idênticos não demonstram contrato ABI.',
+             'Chamadas BLR, vtables C++, protótipos e runtime permanecem não resolvidos.',
+             'Nenhum código ou firmware é modificado, carregado ou executado.']}
+    calls={'iosla_version':APP_VERSION,'generated_at':base['generated_at'],
+       'mode':'resolução de chamadas BL por intervalo de funções LC_FUNCTION_STARTS',
+       'summary':stats,
+       'targets':[{'library':x['library'],'function_vmaddr':x['function_vmaddr'],
+                   'calls':x['call_count'],'unique_callers':x['unique_callers'],
+                   'examples':x['examples'],
+                   'function_truncated':x['target_function']['truncated']} for x in targets],
+       'limitations':['A resolução usa endereços em seções validadas e função com limite recuperado.',
+                      'Não é uma lista de imports dinâmicos; funções internas/inlined não são inferidas.']}
+    return calls,base
+
+
+def _v011_cpp_research(results:dict)->dict:
+    rows=[]
+    for label,scan in results.items():
+        for name,img in scan.get('images',{}).items():
+            if img.get('status')!='funcoes_e_chamadas_indexadas':
+                continue
+            rows.append({'firmware':label,'driver':name,
+               'indirect_blr_observed':img.get('indirect_calls',0),
+               'pac_category_observed':img.get('pac_instructions',0),
+               'functions_scanned':len(img.get('functions',[])),
+               'functions_with_truncated_instructions':img.get('coverage',{}).get('functions_with_instruction_limit',0),
+               'virtual_dispatch':'nao_identificado','cpp_layout':'nao_reconstruido'})
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+       'mode':'padrões ARM64e/indiretos: contagem observacional, não reconstrução C++',
+       'summary':{'driver_firmware_pairs':len(rows),'indirect_call_sites':sum(r['indirect_blr_observed'] for r in rows),
+           'pac_class_instructions':sum(r['pac_category_observed'] for r in rows)},
+       'drivers':rows,'limitations':['BLR sem fluxo de dados não permite descobrir o alvo.',
+           'A classe PAC deste leitor é parcial e não valida autenticação de ponteiros.',
+           'Uma instrução não prova despacho virtual ou vtable específica.']}
+
+
+def _v011_gpu_firmware(inputs:dict|None,snaps:dict|None)->dict:
+    inputs=inputs or {}; snaps=snaps or {}
+    rows=[]
+    for label in ('ORIGEM','CONTROLE','DESTINO'):
+        item=inputs.get(label)
+        if not item:continue
+        meta=item.get('meta',{})
+        component=meta.get('component_paths',{})
+        gpu={k:component.get(k,[]) for k in ('GFX','ANE','AOP','ISP')}
+        kexts=snaps.get(label)
+        gpuids={}
+        if kexts is not None:
+            for ident in ('com.apple.AGXG11P','com.apple.AGXG12P',
+                          'com.apple.AGXFirmwareKextG11PRTBuddy',
+                          'com.apple.AGXFirmwareKextG12PRTBuddy'):
+                k=kexts.kexts.get(ident)
+                if k:
+                    gpuids[ident]=k.version
+        rows.append({'firmware':label,'device':(snaps.get(label).device if snaps.get(label) else (meta.get('devices') or [None])[0]),
+                     'ios_version':meta.get('ios_version'),'build':meta.get('build'),
+                     'manifest_component_paths':gpu,'graphical_kext_versions':gpuids,
+                     'firmware_payload_inspection':'nao_realizada'})
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+        'mode':'inventário manifestos de firmwares auxiliares e drivers gráficos',
+        'firmwares':rows,'summary':{'firmwares_observed':len(rows)},
+        'limitations':['Caminho do firmware não identifica uma API nem comprova compatibilidade.',
+          'Payload binário GFX/AOP/ANE não é inspecionado; hashes e protocolos não são inferidos.',
+          'Não modifica, extrai para execução ou carrega firmware.']}
+
+
+def _v011_matrix(results:dict, calls:dict, continuity:dict, cpp:dict, fw:dict)->dict:
+    rows=[]
+    bylib=continuity['summary']['reported_targets_by_library']
+    for lib in V011_TARGET_LIBRARIES:
+        ls=[row for row in continuity.get('targets',[]) if row['library']==lib]
+        rows.append({'driver':'com.apple.AGXG11P','dependency':lib,
+          'direct_call_targets_verified':bylib.get(lib,0),
+          'unique_candidate_recent':sum(len(x['a_to_c']['candidates'])==1 and
+            x['a_to_c']['state'] in ('bytes_identicos_unicos','estrutura_candidata_unica') for x in ls),
+          'ambiguous_or_unresolved':sum(x['a_to_c']['state'] not in
+              ('bytes_identicos_unicos','estrutura_candidata_unica') for x in ls),
+          'evidence':'chamadas_diretas_e_localizacao_em_intervalo_de_funcao',
+          'abi_contract':'nao_demonstrado','runtime_iokit':'nao_verificado',
+          'firmware_protocol':'nao_verificado','signing_and_boot':'fora_do_escopo'})
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+       'mode':'matriz observacional por biblioteca, sem probabilidade de port',
+       'summary':{'libraries_examined':len(rows),'target_functions':sum(r['direct_call_targets_verified'] for r in rows),
+                  'truncated_calls':calls['summary']['source_direct_calls_truncated']},
+       'drivers':rows,'limitations':['Nenhum critério de ABI completa é satisfeito apenas com hashes ou chamadas diretas.',
+          'Não se demonstra que as funções tenham argumentos/estruturas equivalentes.',
+          'O sistema não executa ou instala drivers e não altera boot ou integridade.']}
+
+
+def _v011_md(report:dict)->str:
+    lines=[f'# IOSLA v{APP_VERSION} — {report.get("mode", "Pesquisa de interfaces")}','',
+           '**Somente leitura. Compatibilidade ABI e inicialização não demonstradas.**','']
+    if report.get('summary'):
+        lines+=['## Cobertura e resultados','', '```json',
+            json.dumps(report['summary'],indent=2,ensure_ascii=False),'```','']
+    if 'targets' in report:
+        lines+=['## Alvos de chamada','',
+              '| Biblioteca | Função A | Chamadas | A↔B | B↔C | A↔C |','|---|---|---:|---|---|---|']
+        for row in report['targets'][:125]:
+            lib=row['library'].split('.')[-1]
+            fun=row.get('origin_target_function') or row.get('function_vmaddr')
+            lines.append('| `{}` | `{}` | {} | {} | {} | {} |'.format(
+                lib,fun,row.get('calls_from_agxg11p',row.get('calls','-')),
+                row.get('a_to_b',{}).get('state','-'),row.get('b_to_c',{}).get('state','-'),
+                row.get('a_to_c',{}).get('state','-')))
+        if len(report['targets'])>125:
+            lines+=['',f'**Exibindo 125 de {len(report["targets"])} alvos; consultar JSON para a lista completa.**']
+        lines+=['']
+    if 'drivers' in report:
+        lines+=['## Componentes investigados','']
+        for row in report['drivers']:
+            lines+=['### '+str(row.get('driver','Componente')),'','```json',
+                    json.dumps(row,indent=2,ensure_ascii=False),'```','']
+    if 'firmwares' in report:
+        lines+=['## Inventário por firmware','']
+        for row in report['firmwares']:
+            lines+=['### '+str(row['firmware']),'','```json',
+                    json.dumps(row,indent=2,ensure_ascii=False),'```','']
+    if report.get('errors'):
+        lines+=['## Erros de interpretação','',json.dumps(report['errors'],indent=2,ensure_ascii=False),'']
+    lines+=['## Limitações','']+['- '+x for x in report.get('limitations',[])]+['']
+    return '\n'.join(lines)
+
+
+def _v011_generate(results:dict,inputs:dict|None=None,snaps:dict|None=None,errors:dict|None=None)->list[tuple[str,dict]]:
+    calls,continuity=_v011_continuity(results)
+    cpp=_v011_cpp_research(results)
+    fw=_v011_gpu_firmware(inputs,snaps)
+    matrix=_v011_matrix(results,calls,continuity,cpp,fw)
+    if errors:
+        for rep in (calls,continuity,cpp,fw,matrix):
+            rep['errors']=errors
+    return [('CALL_TARGETS',calls),('ABI_CONTINUITY',continuity),
+            ('CPP_RESEARCH',cpp),('GPU_FIRMWARE',fw),('COMPATIBILITY_MATRIX',matrix)]
+
+
+def _v011_lab(self, reuse:bool=False)->None:
+    if reuse and getattr(self,'v011_results',None) is not None:
+        results=self.v011_results; errors=self.v011_errors
+    else:
+        results={};errors={}
+        structural=getattr(self,'v008_scans',{})
+        if not structural:
+            print(' [V11] Primeiro execute [3] para analisar os kernelcaches.')
+            return
+        for label in ('ORIGEM','CONTROLE','DESTINO'):
+            snapshot=self.snapshots.get(label)
+            if not snapshot or not snapshot.kernel_path or label not in structural:
+                errors[label]='Firmware ou kernelcache não interpretável.'
+                continue
+            try:
+                results[label]=_v011_analyze_kernel(snapshot.kernel_path,structural[label])
+                summary={k:v['coverage'].get('functions_indexed',0) for k,v in results[label]['images'].items()}
+                print('  [V11]',label,': funções indexadas',summary)
+            except (KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+                errors[label]=str(exc)
+                print('  [V11]',label,':',str(exc))
+        self.v011_results=results;self.v011_errors=errors
+    for label,report in _v011_generate(results,self.inputs,self.snapshots,errors):
+        files=_v008_export(label,report,_v011_md)
+        _v008_add_summary(self,'v011_'+label.lower(),files,report.get('summary',{}))
+        print('  [V11] Relatório:',files[1].name)
+    print('  [INFO] Apenas leitura; nenhuma correspondência comprova ABI, execução ou boot.')
+
+
+_v011_previous_analyze=Terminal.analyze
+
+def _v011_terminal_analyze(self):
+    _v011_previous_analyze(self)
+    print('\n  [V11] Indexando funções e continuidade de chamadas...')
+    _v011_lab(self)
+
+Terminal.analyze=_v011_terminal_analyze
+
+
+def _v011_show(self):
+    print('\n'+Style.BLUE+'═'*66+Style.RESET)
+    print('     IOSLA v'+APP_VERSION+' | ABI CALL-TARGET CONTINUITY')
+    print('                Offline · Somente leitura')
+    print(Style.BLUE+'═'*66+Style.RESET)
+    for key,label in (('ORIGEM','iPhone XS · A12 · iOS 18'),
+                      ('DESTINO','iPhone 11 · A13 · iOS recente'),
+                      ('CONTROLE','iPhone 11 · A13 · CONTROLE iOS 18')):
+        item=self.inputs.get(key)
+        if item:
+            m=item['meta']
+            print(f" {label:39} [OK] {m['ios_version']} / {m['build']}")
+        else:
+            print(f' {label:39} [ ] Aguardando')
+    print('''\n [1] Arrastar IPSW do iPhone XS
+ [2] Arrastar IPSW recente do iPhone 11
+ [3] ANALISAR TUDO E GERAR RELATÓRIOS
+ [4] Ver resultados e abrir pasta
+ [5] Adicionar IPSW de controle: iPhone 11 / iOS 18
+ [6] Inspeção profunda de uma KEXT (após análise)
+ [7] Laboratório de interfaces e compatibilidade
+ [0] Sair\n''')
+
+Terminal.show=_v011_show
+
+
+def _v011_run(self):
+    ensure_home()
+    while True:
+        try:
+            self.show()
+            option=input(Style.CYAN+' Número > '+Style.RESET).strip()
+            if option=='0':
+                print(' IOSLA encerrado.')
+                break
+            if option in ('1','2','5'):
+                label={'1':'ORIGEM','2':'DESTINO','5':'CONTROLE'}[option]
+                self.load(label)
+                self.v011_results=None
+                if label=='CONTROLE' and label in self.inputs:
+                    meta=self.inputs[label]['meta']
+                    if not str(meta.get('ios_version','')).startswith('18.'):
+                        print(' [AVISO] Controle diferente de iOS 18; comparação com ressalvas.')
+                continue
+            if option=='3':self.analyze()
+            elif option=='4':self.results()
+            elif option=='6':_v008_deep_interactive(self)
+            elif option=='7':_v011_lab(self,reuse=True)
+            else:print(' [AVISO] Escolha um número entre 0 e 7.')
+        except (EOFError,KeyboardInterrupt):
+            print('\n IOSLA encerrado.')
+            break
+        except (IOSLAError,KernelFormatError,OSError,ValueError,zipfile.BadZipFile) as exc:
+            print(Style.RED+' [ERRO] '+str(exc)+Style.RESET)
+
+Terminal.run=_v011_run
+
+
+_v011_previous_main=main
+
+
+def _v011_test_image(name:str,version:int=1)->tuple[bytes,dict]:
+    # Simulate a Mach-O fileset with separate executable and linkedit regions.
+    data,scan=_v010_synthetic_image(version)
+    img=scan['images']['com.apple.AGXG11P']
+    return data, {'images':{name:img},'format':'synthetic'}
+
+
+def _v011_self_test():
+    import tempfile
+    # Real v10 Mach-O synthetic fixture verifies mapping, starts, and instruction classifier.
+    d,sc=_v010_synthetic_image(1)
+    starts,regions=_v011_index_intervals(sc)
+    one=_v011_examine_image(d,sc,'com.apple.AGXG11P',starts,regions)
+    assert one['status']=='funcoes_e_chamadas_indexadas',one
+    assert len(one['functions'])==3 and len(one['direct_calls'])==2,one
+    assert one['coverage']['functions_truncated'] is False
+    f=one['functions'][0]
+    idx=_v011_build_match_index(one)
+    match=_v011_match_function(f,idx)
+    # Four-instruction test functions deliberately have low discriminatory power.
+    assert match['state']=='funcao_curta_ou_truncada',match
+    addr=int(one['functions'][0]['vmaddr'],16)
+    byaddr=[int(f['vmaddr'],16) for f in one['functions']]
+    assert _v011_owning_function(addr+4,byaddr,one['functions']) is not None
+    assert _v011_owning_function(addr-4,byaddr,one['functions']) is None
+    raw={'status':'funcoes_e_chamadas_indexadas','functions':[
+        {**f,'instructions_scanned':12,'truncated':False,'opcode_histogram':{'ALU':4,'BL':4,'RET':2,'ADRP':2}}]}
+    exact=_v011_match_function(raw['functions'][0],_v011_build_match_index(raw))
+    assert exact['state']=='bytes_identicos_unicos',exact
+    data={'ORIGEM':{'images':{'com.apple.AGXG11P':one}},
+          'CONTROLE':{'images':{'com.apple.AGXG11P':one}},
+          'DESTINO':{'images':{'com.apple.AGXG11P':one}}}
+    reports=_v011_generate(data)
+    with tempfile.TemporaryDirectory(prefix='iosla011_') as td:
+        for name,rep in reports:
+            a,b=_v008_export(name,rep,_v011_md,Path(td))
+            assert a.is_file() and b.is_file()
+            assert json.loads(a.read_text())['iosla_version']==APP_VERSION
+    # Reference resolution must not fabricate mappings when target is outside map.
+    assert _v011_find_region(0xffffffffffffffff,starts,regions)['state']=='destino_nao_mapeado'
+    assert len(reports)==5
+    print('IOSLA v0.0.11: índice completo, alvos BL, continuidade e relatórios OK (sintéticos).')
+
+
+def main():
+    if len(sys.argv)==2 and sys.argv[1]=='--self-test':
+        _v008_original_main()
+        _v009_self_test()
+        _v010_self_test()
+        _v011_self_test()
+        return
+    if len(sys.argv)>=4 and sys.argv[1]=='--continuity-from-kernels' and len(sys.argv) in (4,5):
+        ensure_home()
+        paths={'ORIGEM':sys.argv[2],'DESTINO':sys.argv[3]}
+        if len(sys.argv)==5:paths['CONTROLE']=sys.argv[4]
+        data={};errors={}
+        for label,path in paths.items():
+            try:
+                structural=_v009_scan_kernel(path)
+                data[label]=_v011_analyze_kernel(path,structural)
+            except (KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+                errors[label]=str(exc)
+        for key,rep in _v011_generate(data,errors=errors):
+            a,b=_v008_export(key,rep,_v011_md)
+            print(key+':',b)
+        return
+    _v011_previous_main()
 
 
 if __name__ == '__main__':
