@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""IOSLA v0.0.6 — Hardware Compatibility Research Analyzer e análise local de IPSW para pesquisa de compatibilidade.
+"""IOSLA v0.0.9 — Mach-O Fileset Mapping & ABI Recovery e análise local de IPSW para pesquisa de compatibilidade.
 
     python3 main.py
     python3 main.py --diagnose-ipsw "/caminho/firmware.ipsw"
@@ -559,7 +559,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.0.6"
+APP_VERSION = "0.0.9"
 MAX_KERNEL_SIZE = 768 * 1024 * 1024
 
 
@@ -957,7 +957,7 @@ def make_markdown(report: dict[str, Any]) -> str:
     def safe(text: Any) -> str:
         return str(text or "-").replace("|", "\\|").replace("\n", " ")
 
-    title = "# IOSLA v0.0.6 — Kernel & KEXT Analyzer"
+    title = f"# IOSLA v{APP_VERSION} — Kernel & KEXT Analyzer"
     lines = [title, "", f"Gerado em: {report['generated_at']}", ""]
     if report["demo"]:
         lines.extend(["> **DEMONSTRAÇÃO:** dados sintéticos, não são KEXTs reais da Apple.", ""])
@@ -1086,7 +1086,7 @@ def patch_review(old: Snapshot, new: Snapshot, report: dict[str, Any]) -> dict[s
 
 def patch_review_markdown(data: dict[str, Any]) -> str:
     lines = [
-        '# IOSLA v0.0.6 — Investigação de compatibilidade para patch', '',
+        f'# IOSLA v{APP_VERSION} — Investigação de compatibilidade para patch', '',
         '**Resultado: inconclusivo. Este arquivo não aplica patches.**', '',
         f"Data: {data['generated_at']}", '',
         '## Fontes', '',
@@ -1171,7 +1171,7 @@ class Terminal:
 
     def show(self):
         print('\n' + Style.BLUE + '═' * 62 + Style.RESET)
-        print('          IOSLA v0.0.6  |  COMPATIBILITY EVIDENCE VALIDATOR')
+        print('          IOSLA v0.0.7  |  KEXT PORTABILITY RESEARCH')
         print('              Offline · Somente leitura')
         print(Style.BLUE + '═' * 62 + Style.RESET)
         for label, title in (('ORIGEM', 'iPhone XS (iOS 18)'),
@@ -1190,7 +1190,7 @@ class Terminal:
         print('\n Digite apenas o número da opção.')
 
     def load(self, label: str):
-        title = 'iPhone XS — referência iOS 18' if label == 'ORIGEM' else 'iPhone 11 — iOS recente'
+        title = {'ORIGEM': 'iPhone XS — referência iOS 18', 'DESTINO': 'iPhone 11 — iOS recente', 'CONTROLE': 'iPhone 11 — CONTROLE iOS 18'}[label]
         print('\n' + Style.CYAN + 'CARREGAR: ' + title + Style.RESET)
         raw = input(' Arraste o IPSW aqui e pressione ENTER: ')
         if not raw.strip():
@@ -1214,7 +1214,7 @@ class Terminal:
         if not meta['kernel_references']:
             print(' [AVISO] Nenhum kernelcache foi localizado. O diagnóstico')
             print('         e a comparação de manifestos ainda serão gerados.')
-        if len(self.inputs) == 2:
+        if 'ORIGEM' in self.inputs and 'DESTINO' in self.inputs:
             print(' [PRONTO] Escolha [3] para iniciar toda a análise.')
 
     @staticmethod
@@ -1343,7 +1343,7 @@ class Terminal:
         report_md = REPORT_ROOT / f'IOSLA_RESUMO_{stamp}.md'
         report_json.write_text(json.dumps(overview, ensure_ascii=False, indent=2), encoding='utf-8')
         report_md.write_text(
-            '# IOSLA v0.0.6 — Resultado da análise\n\n'
+            f'# IOSLA v{APP_VERSION} — Resultado da análise\n\n'
             + f"- Data: {overview['generated_at']}\n"
             + f"- Comparação de KEXTs: {overview['kernel_and_kext_analysis']}\n"
             + f"- Componentes de manifesto divergentes: {overview['manifest_changes']}\n"
@@ -2133,7 +2133,7 @@ def compare_devicetrees(old:dict|None,new:dict|None)->dict:
 
 
 def devicetree_markdown(report:dict)->str:
-    l=['# IOSLA v0.0.6 — DeviceTree Analyzer','',
+    l=[f'# IOSLA v{APP_VERSION} — DeviceTree Analyzer','',
        '**Comparação estática de duas placas diferentes. Nenhuma compatibilidade foi demonstrada.**','',
        '## Firmware / placa','']
     for key,title in [('ORIGEM','iPhone XS'),('DESTINO','iPhone 11')]:
@@ -2331,7 +2331,7 @@ _original_abi_markdown_v003=abi_markdown
 
 
 def abi_markdown(report:dict)->str:
-    result=_original_abi_markdown_v003(report).replace('IOSLA v0.0.3 — Kernel ABI Analyzer','IOSLA v0.0.6 — Kernel Structure & ABI Analyzer',1)
+    result=_original_abi_markdown_v003(report).replace('IOSLA v0.0.3 — Kernel ABI Analyzer',f'IOSLA v{APP_VERSION} — Kernel Structure & ABI Analyzer',1)
     lines=['','## Diagnóstico de estrutura Mach-O (v0.0.6)','']
     for label in ('origin','target'):
         record=report.get('macho_structure_diagnostics',{}).get(label,{})
@@ -2696,7 +2696,7 @@ def make_hardware_research(inputs:dict, snapshots:dict, dt_report:dict|None=None
 
 
 def hardware_research_markdown(data:dict)->str:
-    lines=['# IOSLA v0.0.6 — Hardware Compatibility Research', '',
+    lines=[f'# IOSLA v{APP_VERSION} — Hardware Compatibility Research', '',
            '**Investigação estática, somente leitura; não valida patches nem boot.**','',
            '## Sistemas','',
            '- Origem: iPhone XS · iOS '+data['devices']['origin']['ios'],
@@ -3110,7 +3110,7 @@ def make_evidence_validation(inputs: dict, snapshots: dict, dt_report: dict | No
 
 
 def evidence_validation_markdown(report: dict) -> str:
-    rows = ['# IOSLA v0.0.6 — Compatibility Evidence Validator', '',
+    rows = [f'# IOSLA v{APP_VERSION} — Compatibility Evidence Validator', '',
             '**Relatório somente leitura. Não comprova suporte, boot ou patch funcional.**', '',
             '## Firmwares', '',
             '- Origem: iPhone XS / ' + report['devices']['origin']['ios'],
@@ -3315,9 +3315,1674 @@ def main():
     Terminal().run()
 
 
+# ==========================================================================
+# IOSLA v0.0.7 — KEXT Portability Research (read-only; no patch generation)
+# ==========================================================================
+
+V007_PRIORITY = (
+    (r'AGXG11P|AGXFirmware|IOGPUFamily|IOSurface|Apple.*Display', 'GPU e tela'),
+    (r'AppleT8020|AppleARMPlatform|AppleARMPMU|ApplePMGR|Apple.*Clock', 'Plataforma e energia'),
+    (r'ANE|Neural', 'ANE'),
+    (r'USBHostT8020|AppleUSB|USB', 'USB'),
+    (r'SEP|AppleImage4|trust|Security', 'Segurança/SEP'),
+    (r'Baseband|WLAN|Wifi|Bluetooth', 'Conectividade'),
+)
+V007_FOCUS = ('com.apple.AGXG11P', 'com.apple.AGXFirmwareKextG11PRTBuddy',
+              'com.apple.driver.AppleT8020', 'com.apple.driver.usb.AppleUSBHostT8020',
+              'com.apple.driver.AppleH11ANEInterface')
+
+
+def _v007_subsystem(identifier: str) -> str:
+    for pattern, label in V007_PRIORITY:
+        if re.search(pattern, identifier, re.I):
+            return label
+    return 'Outros'
+
+
+def _v007_probe_one(node: dict, rules: dict) -> dict:
+    """Tri-state ADT textual witness, NOT IORegistry matching or runtime execution.
+
+    All declared text rules must have a witness, and any *observable* mismatch
+    is marked as a textual divergence, not as proof of non-loading.
+    """
+    witnesses, contradictions, unresolved = [], [], []
+    names = {x for name in V006_STABLE_NAMES for x in (_v006_text_values(node, name) or [])}
+    for key in ('IONameMatch', 'IONameMatched'):
+        if key not in rules:
+            continue
+        values = rules[key]
+        if isinstance(values, str):
+            values = [values]
+        values = [s for s in values if isinstance(s, str)] if isinstance(values, list) else []
+        if not values:
+            unresolved.append(key + ': regra não textual')
+        elif any(s in names for s in values):
+            witnesses.append({'rule': key, 'value': next(s for s in values if s in names)})
+        elif names:
+            contradictions.append(key + ': sem coincidência textual no nó')
+        else:
+            unresolved.append(key + ': nó sem nomes decodificáveis')
+    if 'IOPropertyMatch' in rules:
+        props = rules['IOPropertyMatch']
+        if not isinstance(props, dict):
+            unresolved.append('IOPropertyMatch: estrutura não comparável')
+        else:
+            for key, value in sorted(props.items()):
+                values = [value] if isinstance(value, str) else (value if isinstance(value, list) else [])
+                values = [s for s in values if isinstance(s, str)]
+                node_values = _v006_text_values(node, key)
+                if not values or node_values is None:
+                    unresolved.append('IOPropertyMatch.' + key + ': dados textuais insuficientes')
+                elif set(values).intersection(node_values):
+                    witnesses.append({'rule': 'IOPropertyMatch.' + key,
+                                      'value': sorted(set(values).intersection(node_values))[0]})
+                else:
+                    contradictions.append('IOPropertyMatch.' + key + ': valores textuais distintos')
+    for k in ('IOProviderClass', 'IOClass'):
+        if k in rules:
+            unresolved.append(k + ': depende do IORegistry em execução')
+    if contradictions:
+        status = 'divergencia_textual'
+    elif witnesses:
+        status = 'indicio_textual_com_condicoes_nao_validadas'
+    else:
+        status = 'sem_evidencia_textual'
+    return {'status': status, 'witnesses': witnesses, 'divergences': contradictions,
+            'unverified': unresolved}
+
+
+def _v007_probe_tree(kext: Kext, nodes: dict, max_details: int = 5) -> dict:
+    if not nodes:
+        return {'status': 'nao_avaliado', 'reason': 'DeviceTree não disponível ou não decodificado',
+                'match_count': 0, 'details': []}
+    if not kext.personality_matching:
+        return {'status': 'sem_regras_recuperadas', 'reason': 'Nenhuma personalidade IOKit textual disponível',
+                'match_count': 0, 'details': []}
+    positive, diverging = [], 0
+    for pname, rules in sorted(kext.personality_matching.items()):
+        if not isinstance(rules, dict):
+            continue
+        for path, node in nodes.items():
+            test = _v007_probe_one(node, rules)
+            if test['status'] == 'divergencia_textual':
+                diverging += 1
+            if test['status'] == 'indicio_textual_com_condicoes_nao_validadas':
+                positive.append({'personality': pname, 'node_path': path, **test})
+    return {'status': ('indicios_textuais' if positive else 'nenhuma_correspondencia_textual_observada'),
+            'match_count': len(positive), 'details': positive[:max_details],
+            'divergent_personality_node_pairs': diverging,
+            'notes': 'Não simula IORegistry, IOKit ProbeScore, classes provedoras ou carregamento real.'}
+
+
+def _v007_transitive_deps(identifier: str, origin: Snapshot, dest: Snapshot,
+                            depth_limit: int = 4, max_nodes: int = 256) -> dict:
+    """Declared dependency graph only; bounded/cycle safe, no version inference."""
+    queue = [(identifier, 0)]
+    visited = {identifier}
+    edges = []
+    names = set()
+    cut = False
+    while queue:
+        current, depth = queue.pop(0)
+        kext = origin.kexts.get(current)
+        if kext is None:
+            continue
+        if depth >= depth_limit:
+            if kext.dependencies:
+                cut = True
+            continue
+        for dep in sorted(kext.dependencies):
+            edges.append({'from': current, 'to': dep, 'requested_version': kext.dependencies[dep],
+                          'observed_in_target_inventory': dep in dest.kexts})
+            names.add(dep)
+            if dep in origin.kexts and dep not in visited:
+                if len(visited) >= max_nodes:
+                    cut = True
+                    continue
+                visited.add(dep)
+                queue.append((dep, depth + 1))
+    unknown = sorted(name for name in names if name not in dest.kexts)
+    return {'dependency_names': len(names), 'edges_examined': len(edges),
+            'not_observed_in_target': unknown[:50], 'not_observed_count': len(unknown),
+            'traversal_limited': cut, 'depth_limit': depth_limit,
+            'notes': 'Arestas provêm de OSBundleLibraries; ausência não prova inexistência.'}
+
+
+def _v007_new_driver_candidates(identifier: str, dest: Snapshot) -> list[dict]:
+    """Exact-ID or narrowly renamed successor candidates: name heuristics only."""
+    variants = [(identifier, 'mesmo_identificador')]
+    for pattern, repl, rule in ((r'G11P', 'G12P', 'renomeacao_g11p_g12p'),
+                                (r'T8020', 'T8030', 'renomeacao_t8020_t8030'),
+                                (r'H11', 'H12', 'renomeacao_h11_h12')):
+        translated = re.sub(pattern, repl, identifier, flags=re.I)
+        if translated != identifier:
+            variants.append((translated, rule))
+    result, seen = [], set()
+    for name, rule in variants:
+        if name in dest.kexts and name not in seen:
+            result.append({'identifier': name, 'relation': rule,
+                           'warning': 'Mesmo nome ou nome parecido NÃO demonstra implementação equivalente.'})
+            seen.add(name)
+    return result
+
+
+def make_portability_research(inputs: dict, snapshots: dict, evidence: dict | None = None,
+                              abi: dict | None = None, *, decoded_trees: dict | None = None) -> dict:
+    """Investigates OLD KEXT rules against NEW board; does NOT produce any patched binary."""
+    src, dst = snapshots.get('ORIGEM'), snapshots.get('DESTINO')
+    trees = decoded_trees or {}
+    warning = []
+    if not src or not dst:
+        warning.append('São necessários dois inventários de KEXTs interpretáveis.')
+    if not trees.get('DESTINO', {}).get('nodes'):
+        warning.append('DeviceTree do destino não interpretado; teste cruzado de regras não executado.')
+    if not trees.get('ORIGEM', {}).get('nodes'):
+        warning.append('DeviceTree da origem não interpretado; testemunhas de referência limitadas.')
+    old_nodes = trees.get('ORIGEM', {}).get('nodes', {})
+    new_nodes = trees.get('DESTINO', {}).get('nodes', {})
+    previous = (evidence or {}).get('associations', [])
+    by_source_id = {}
+    for item in previous:
+        if item.get('device') == 'ORIGEM':
+            by_source_id.setdefault(item.get('kext'), []).append(item)
+    dossier = []
+    if src and dst:
+        # Source inventory is authoritative for list of OLD drivers, not for portability.
+        for identifier, kext in sorted(src.kexts.items()):
+            direct = []
+            for dep, needed in sorted(kext.dependencies.items()):
+                other = dst.kexts.get(dep)
+                direct.append({'id': dep, 'requested_version': needed,
+                               'observed_in_target': other is not None,
+                               'target_reported_version': other.version if other else None,
+                               'version_abi_validated': False})
+            origin_test = _v007_probe_tree(kext, old_nodes) if old_nodes else {
+                'status': 'nao_avaliado', 'match_count': len(by_source_id.get(identifier, [])),
+                'details': [], 'reason': 'Associações herdadas da v0.0.6, sem ADT decodificado'}
+            dest_test = _v007_probe_tree(kext, new_nodes)
+            dep_chain = _v007_transitive_deps(identifier, src, dst)
+            # Contraprova complementar: drivers NOVOS no ADT do XS (hardware real
+            # imaginado para um possível iOS mais recente no A12).
+            target_candidates = []
+            for candidate in _v007_new_driver_candidates(identifier, dst):
+                candidate_probe = _v007_probe_tree(dst.kexts[candidate['identifier']], old_nodes, max_details=3)
+                target_candidates.append({**candidate, 'new_driver_on_old_board': candidate_probe})
+            missing_direct = [p['id'] for p in direct if not p['observed_in_target']]
+            gates = {
+                'source_driver_found': True,
+                'same_identifier_observed_in_target': identifier in dst.kexts,
+                'direct_dependencies_not_observed': missing_direct,
+                'transitive_dependencies_not_observed': dep_chain['not_observed_in_target'],
+                'source_board_textual_match': origin_test['status'],
+                'target_board_textual_match': dest_test['status'],
+                'abi_compatibility': 'nao_demonstrada',
+                'runtime_iokit_binding': 'nao_verificado',
+                'secure_boot_and_signing': 'nao_verificados',
+                'driver_extraction_or_loading': 'nao_implementados',
+            }
+            priority = ('foco' if identifier in V007_FOCUS else
+                        'investigar' if missing_direct or (dest_test['status'] == 'nenhuma_correspondencia_textual_observada'
+                        and origin_test['match_count'] > 0) else 'referencia')
+            dossier.append({
+                'identifier': identifier, 'category': _v007_subsystem(identifier),
+                'source_version': kext.version,
+                'target_version_if_present': dst.kexts[identifier].version if identifier in dst.kexts else None,
+                'personalities_recovered': len(kext.personality_matching),
+                'direct_dependencies': direct,
+                'direct_dependencies_count': len(direct),
+                'direct_dependencies_not_observed_count': len(missing_direct),
+                'transitive_dependency_analysis': dep_chain,
+                'source_device_tree_probe': origin_test,
+                'target_device_tree_probe': dest_test,
+                'newer_driver_candidate_on_original_board': target_candidates,
+                'readiness_gates': gates,
+                'research_priority': priority,
+                'conclusion': 'INCONCLUSIVO: nenhum suporte à execução, ABI ou assinatura demonstrado',
+            })
+    focus = sorted(dossier, key=lambda r: (r['research_priority'] != 'foco',
+                    r['research_priority'] != 'investigar', r['identifier']))
+    device_info = {
+        'origin': {'device': src.device if src else 'iPhone11,2',
+                   'ios_version': src.ios_version if src else inputs.get('ORIGEM',{}).get('meta',{}).get('ios_version','?')},
+        'target': {'device': dst.device if dst else 'iPhone12,1',
+                   'ios_version': dst.ios_version if dst else inputs.get('DESTINO',{}).get('meta',{}).get('ios_version','?')},
+    }
+    abi_available = bool((abi or {}).get('summary', {}).get('origin_images_with_symbols', 0)
+                         and (abi or {}).get('summary', {}).get('target_images_with_symbols', 0))
+    return {'iosla_version': APP_VERSION, 'generated_at': datetime.now(timezone.utc).isoformat(),
+            'mode': 'read-only / testes cruzados textuais / auditoria de dependências',
+            'devices': device_info,
+            'coverage': 'parcial' if src and dst else 'insuficiente',
+            'summary': {
+                'source_drivers_audited': len(dossier),
+                'drivers_with_direct_dependency_names_missing': sum(bool(x['direct_dependencies_not_observed_count']) for x in dossier),
+                'drivers_with_target_textual_witness': sum(x['target_device_tree_probe']['match_count'] > 0 for x in dossier),
+                'drivers_with_source_witness_and_no_target_witness': sum(x['source_device_tree_probe']['match_count'] > 0 and
+                      x['target_device_tree_probe']['status'] == 'nenhuma_correspondencia_textual_observada' for x in dossier),
+                'newer_driver_candidates_with_original_board_textual_witness': sum(any(
+                    c['new_driver_on_old_board']['match_count'] > 0 for c in x['newer_driver_candidate_on_original_board']) for x in dossier),
+                'target_devicetree_test_executed': bool(new_nodes),
+                'binary_abi_observed_on_both_sides': abi_available,
+            },
+            'research_focus': [x['identifier'] for x in focus[:12]],
+            'drivers': dossier,
+            'warnings': warning,
+            'interpretation': {
+                'observed': 'Versões, regras IOKit, nomes de dependências, DeviceTree e indicadores observáveis.',
+                'not_proven': 'Compatibilidade binária, execução de KEXTs, boot, assinatura e funcionamento.',
+                'target_match': 'Correspondência textual antiga no novo ADT é pista; ausência de pista não é falha comprovada.',
+                'reverse_target_match': 'Testa também regras de KEXTs mais novas contra ADT do XS, representando o hardware desejado; não executa kernel novo no XS.',
+                'target_version': 'Lida dos metadados do IPSW; análise aceita iOS 26, 27 ou outra versão compatível com os arquivos de entrada.'},
+            'research_next_steps': [
+                'Obter interfaces ABI efetivamente observáveis para IOGPUFamily, IOSurface e KPIs; sem símbolos o diagnóstico permanece limitado.',
+                'Comparar as regras e dependências do AGXG11P com AGXG12P e parâmetros do controlador sgx nas duas placas.',
+                'Separar dependências de kernel e diferenças elétricas/registradores do GPU e gerenciamento de energia.',
+                'Conferir requisitos de firmware gráfico, microcontroladores e componentes de boot usando evidências estáticas.',
+                'Antes de qualquer experimento em hardware, demonstrar método legítimo de assinatura/boot aplicável; este programa não faz bypass.'
+            ]}
+
+
+def portability_markdown(report: dict) -> str:
+    a, b = report['devices']['origin'], report['devices']['target']
+    summary = report['summary']
+    rows = [f'# IOSLA v{APP_VERSION} — KEXT Portability Research', '',
+            '**Pesquisa estática, somente leitura. NÃO cria patches nem comprova boot.**', '',
+            f"Origem: {a['device']} / iOS {a['ios_version']} · Destino: {b['device']} / iOS {b['ios_version']}", '',
+            '## Diagnóstico', '',
+            f"- KEXTs de origem auditadas: **{summary['source_drivers_audited']}**",
+            f"- KEXTs com dependências diretas não observadas no destino: **{summary['drivers_with_direct_dependency_names_missing']}**",
+            f"- KEXTs com pelo menos uma coincidência textual no DeviceTree destino: **{summary['drivers_with_target_textual_witness']}**",
+            f"- Testes com testemunha na origem e sem testemunha no destino: **{summary['drivers_with_source_witness_and_no_target_witness']}**",
+            f"- Teste cruzado de DeviceTree executado: **{summary['target_devicetree_test_executed']}**",
+            f"- Possíveis KEXTs novas com indício textual no ADT original: **{summary['newer_driver_candidates_with_original_board_textual_witness']}**",
+            '- ABI compatível: **não demonstrada**',
+            '- Assinatura e boot: **não verificados**', '',
+            '## Drivers para investigação', '',
+            '| KEXT do sistema antigo | Dependências não observadas | Regras no hardware de destino |',
+            '|---|---:|---|']
+    focused = [next((x for x in report['drivers'] if x['identifier'] == ident), None)
+               for ident in report['research_focus']]
+    for item in focused:
+        if item:
+            rows.append('| `' + item['identifier'].replace('|', '') + '` | ' +
+                        str(item['direct_dependencies_not_observed_count']) + ' | ' +
+                        item['target_device_tree_probe']['status'].replace('_', ' ') + ' |')
+    rows += ['', '## Dossiês técnicos', '']
+    for item in focused[:10]:
+        if item is None:
+            continue
+        rows.extend([f"### `{item['identifier']}`", '',
+                     f"- Versão na origem: `{item['source_version']}`; versão no destino: `{item['target_version_if_present']}`.",
+                     f"- Personalidades recuperadas: {item['personalities_recovered']}.",
+                     f"- Regras no DeviceTree de origem: {item['source_device_tree_probe']['status']}.",
+                     f"- Regras aplicadas ao DeviceTree de destino: **{item['target_device_tree_probe']['status']}**.",
+                     f"- Dependências transitivas (nomes): {item['transitive_dependency_analysis']['dependency_names']} ",
+                     f"- Dependências transitivas não observadas: {', '.join(item['transitive_dependency_analysis']['not_observed_in_target'][:8]) or 'nenhuma na amostra'}", ''])
+        for dep in item['direct_dependencies'][:22]:
+            rows.append('- `' + dep['id'] + '` — ' + ('identificador observado' if dep['observed_in_target'] else 'não observado') +
+                        ' (versão requisitada: ' + dep['requested_version'] + ', destino: ' + str(dep['target_reported_version']) + ')')
+        rows.append('')
+        for candidate in item['newer_driver_candidate_on_original_board']:
+            rows.append('- Driver do sistema novo com nome correspondente: `' + candidate['identifier'] +
+                        '` (' + candidate['relation'] + ') → teste no ADT do XS: ' +
+                        candidate['new_driver_on_old_board']['status'] +
+                        ' **(heurística; não demonstra equivalência binária)**')
+        for match in item['target_device_tree_probe']['details'][:3]:
+            rows.append('- Testemunha ADT destino: `' + match['node_path'] + '` / `' + match['personality'] + '`: ' +
+                        ', '.join(w['rule'] + '=' + w['value'] for w in match['witnesses'][:3]))
+        rows.append('')
+    rows += ['## Próximos experimentos de pesquisa', '']
+    rows += ['- ' + p for p in report['research_next_steps']]
+    rows += ['', '## Escopo e limitações', '',
+             '- Não calcula probabilidade de port ou marca ABI como compatível a partir de nomes.',
+             '- Não produz KEXTs transplantadas, altera binários, quebra assinaturas ou instala iOS.',
+             '- DeviceTree e inventários são parciais e diferenças de SoC não podem ser resolvidas apenas com metadados.',
+             '- Depender de uma versão mínima não significa ser semanticamente compatível com qualquer versão maior.',
+             '- Firmwares A12/iOS 18 vs A13/iOS mais recente diferem em SoC **e** versão: resultados não isolam causa.', '']
+    if report['warnings']:
+        rows += ['## Avisos', ''] + ['- ' + s for s in report['warnings']] + ['']
+    return '\n'.join(rows)
+
+
+def export_portability(report: dict, directory: Path) -> tuple[Path, Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+    jp = directory / f'IOSLA_PORTABILIDADE_{stamp}.json'
+    md = directory / f'IOSLA_PORTABILIDADE_{stamp}.md'
+    jp.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+    md.write_text(portability_markdown(report), encoding='utf-8')
+    return jp, md
+
+
+def _v007_parse_trees(dt_report: dict | None) -> tuple[dict, list[str]]:
+    result, errors = {}, []
+    for label in ('ORIGEM', 'DESTINO'):
+        path = (dt_report or {}).get('sources', {}).get(label, {}).get('path')
+        if not path:
+            errors.append(label + ': DeviceTree local não indicado no relatório')
+            continue
+        try:
+            result[label] = parse_apple_devicetree(Path(path).read_bytes())
+        except (OSError, ValueError, DeviceTreeFormatError, KernelFormatError) as exc:
+            errors.append(label + ': ' + str(exc))
+    return result, errors
+
+
+_previous_terminal_analyze_v006 = Terminal.analyze
+
+
+def _terminal_analyze_v007(self):
+    _previous_terminal_analyze_v006(self)
+    print('\n  [PORT] Avaliando drivers iOS antigo → hardware do destino...')
+    dt = _v006_find_json(self.generated, 'IOSLA_DEVICETREE_')
+    ev = _v006_find_json(self.generated, 'IOSLA_EVIDENCIAS_')
+    abi = _v006_find_json(self.generated, 'IOSLA_ABI_')
+    trees, errors = _v007_parse_trees(dt)
+    report = make_portability_research(self.inputs, self.snapshots, ev, abi, decoded_trees=trees)
+    report['warnings'].extend(errors)
+    jp, md = export_portability(report, REPORT_ROOT)
+    self.generated.extend((jp, md))
+    if self.last_summary is not None:
+        self.last_summary['iosla_version'] = APP_VERSION
+        self.last_summary['portability_research'] = {'summary': report['summary'],
+                                                    'coverage': report['coverage'],
+                                                    'reports': [str(jp), str(md)]}
+        self.last_summary.setdefault('files', []).extend((str(jp), str(md)))
+        for previous in self.generated:
+            if previous.name.startswith('IOSLA_RESUMO_') and previous.suffix == '.json':
+                previous.write_text(json.dumps(self.last_summary, ensure_ascii=False, indent=2), encoding='utf-8')
+            elif previous.name.startswith('IOSLA_RESUMO_') and previous.suffix == '.md':
+                with previous.open('a', encoding='utf-8') as fd:
+                    fd.write('\n## Investigação de portabilidade (v0.0.7)\n\n')
+                    fd.write('- KEXTs auditadas: ' + str(report['summary']['source_drivers_audited']) + '\n')
+                    fd.write('- Testemunhas no ADT destino: ' + str(report['summary']['drivers_with_target_textual_witness']) + '\n')
+                    fd.write('- Detalhes: `IOSLA_PORTABILIDADE_*.md`\n')
+    print('  [PORT] KEXTs auditadas:', report['summary']['source_drivers_audited'])
+    print('  [PORT] Teste cruzado com ADT destino:', report['summary']['target_devicetree_test_executed'])
+    print('  [PORT] Relatórios:', jp.name, md.name)
+    print('  [PORT] ABI/assinatura/boot permanecem NÃO demonstrados.')
+
+
+Terminal.analyze = _terminal_analyze_v007
+
+
+def _v007_snapshot_from_kext_report(data: dict, side: str) -> Snapshot:
+    entry = data.get(side, {})
+    if not isinstance(entry, dict):
+        raise IOSLAError('Arquivo KEXT inválido: campo ' + side + ' ausente.')
+    return Snapshot('ORIGEM' if side == 'source' else 'DESTINO',
+                    entry.get('origin', 'relatorio'), 'report', parse_inventory(entry.get('kexts', [])),
+                    ios_version=entry.get('ios_version', '?'), build=entry.get('build', '?'),
+                    device=entry.get('device', '?'))
+
+
+def _v007_from_reports(argv: list[str]) -> None:
+    if len(argv) not in (4, 6):
+        raise IOSLAError('Uso: --portability-from-reports KEXT.json EVIDENCIAS.json [ADT_ORIGEM.im4p ADT_DESTINO.im4p]')
+    kexts = json.loads(Path(argv[2]).expanduser().read_text(encoding='utf-8'))
+    prior = json.loads(Path(argv[3]).expanduser().read_text(encoding='utf-8'))
+    if not isinstance(kexts, dict) or not isinstance(prior, dict):
+        raise IOSLAError('Os dois relatórios devem conter objetos JSON.')
+    snaps = {'ORIGEM': _v007_snapshot_from_kext_report(kexts, 'source'),
+             'DESTINO': _v007_snapshot_from_kext_report(kexts, 'target')}
+    trees = {}
+    if len(argv) == 6:
+        for label, name in (('ORIGEM', argv[4]), ('DESTINO', argv[5])):
+            trees[label] = parse_apple_devicetree(Path(name).expanduser().read_bytes())
+    report = make_portability_research({}, snaps, prior, prior.get('macho_structure'), decoded_trees=trees)
+    ensure_home()
+    jp, md = export_portability(report, REPORT_ROOT)
+    print('Relatórios gerados:', jp, md, sep='\n - ')
+    print('Teste cruzado de DeviceTree:', report['summary']['target_devicetree_test_executed'])
+    if not trees:
+        print('Modo relatórios: sem ADT decodificado, as associações do destino permanecem não avaliadas.')
+
+
+def _iosla_v007_self_test():
+    import tempfile
+    def tree(compat: str):
+        return {'nodes': {'/device-tree/arm-io/sgx':
+                {'text': {'name': ['sgx'], 'compatible': [compat]}, 'properties': {}}}}
+    old = Snapshot('ORIGEM', 'teste', 'sintetico', parse_inventory([
+        {'id': 'com.apple.AGXG11P', 'version': '1', 'dependencies': {'com.apple.iokit.IOGPUFamily': '1.0', 'com.test.missing': '2.0'},
+         'personality_matching': {'GPU': {'IONameMatch': ['gpu,t8020'], 'IOProviderClass': ['IOService']}}},
+        {'id': 'com.apple.iokit.IOGPUFamily', 'version': '1', 'dependencies': {'com.test.extra': '1.0'}}
+    ]), ios_version='18.7', device='iPhone11,2')
+    new = Snapshot('DESTINO', 'teste', 'sintetico', parse_inventory([
+        {'id': 'com.apple.AGXG12P', 'version': '2', 'personality_matching': {'GPU': {'IONameMatch': ['gpu,t8030']}}},
+        {'id': 'com.apple.iokit.IOGPUFamily', 'version': '2'}
+    ]), ios_version='27.0', device='iPhone12,1')
+    trees = {'ORIGEM': tree('gpu,t8020'), 'DESTINO': tree('gpu,t8030')}
+    report = make_portability_research({}, {'ORIGEM': old, 'DESTINO': new}, decoded_trees=trees)
+    drv = next(x for x in report['drivers'] if x['identifier'] == 'com.apple.AGXG11P')
+    assert drv['source_device_tree_probe']['match_count'] == 1
+    assert drv['target_device_tree_probe']['match_count'] == 0
+    assert drv['target_device_tree_probe']['status'] == 'nenhuma_correspondencia_textual_observada'
+    assert drv['direct_dependencies_not_observed_count'] == 1
+    assert drv['newer_driver_candidate_on_original_board'][0]['identifier'] == 'com.apple.AGXG12P'
+    assert drv['newer_driver_candidate_on_original_board'][0]['new_driver_on_old_board']['match_count'] == 0
+    assert 'com.test.extra' in drv['transitive_dependency_analysis']['not_observed_in_target']
+    assert not report['summary']['binary_abi_observed_on_both_sides']
+    assert _v007_probe_one(trees['DESTINO']['nodes']['/device-tree/arm-io/sgx'],
+                          {'IONameMatch': ['gpu,t8020'], 'IOPropertyMatch': {'compatible': ['gpu,t8030']}})['status'] == 'divergencia_textual'
+    with tempfile.TemporaryDirectory(prefix='iosla7_') as td:
+        jp, md = export_portability(report, Path(td))
+        assert jp.exists() and md.exists() and json.loads(jp.read_text())['iosla_version'] == APP_VERSION
+    print('IOSLA v0.0.7: teste cruzado de ADT, dependências transitivas e relatórios aprovados.')
+
+
+_previous_terminal_results_v006 = Terminal.results
+
+
+def _terminal_results_v007(self):
+    _previous_terminal_results_v006(self)
+    if self.last_summary and self.last_summary.get('portability_research'):
+        detail = self.last_summary['portability_research']['summary']
+        print(' Portabilidade:', detail['source_drivers_audited'],
+              'KEXTs auditadas; ABI/boot não demonstrados.')
+        print(' Dossiê: IOSLA_PORTABILIDADE_*.md')
+
+
+Terminal.results = _terminal_results_v007
+
+
+_previous_main_v006 = main
+
+
+def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == '--portability-from-reports':
+        _v007_from_reports(sys.argv)
+        return
+    if len(sys.argv) == 2 and sys.argv[1] == '--self-test':
+        _previous_main_v006()
+        _iosla_v007_self_test()
+        return
+    _previous_main_v006()
+
+
+# ============================================================================
+# IOSLA v0.0.8 — BINARY ABI 2.0 + OPTIONAL SAME-DEVICE FIRMWARE CONTROL
+# All operations are offline, read-only, and do NOT patch firmware / boot devices.
+# ============================================================================
+
+V008_LIMIT_CMDS = 8192
+V008_MAX_BLOB = 4 * 1024 * 1024
+V008_MAX_FUNCS = 250_000
+V008_LC_FUNCTION_STARTS = 0x26
+V008_LC_DATA_IN_CODE = 0x29
+V008_LC_CODE_SIGNATURE = 0x1d
+V008_LC_DYLD_EXPORTS_TRIE = 0x80000033
+V008_LC_DYLD_CHAINED_FIXUPS = 0x80000034
+
+
+def _v008_str16(raw: bytes) -> str:
+    return raw.partition(b'\x00')[0].decode('ascii', 'replace')
+
+
+def _v008_offset_candidates(data: bytes, start: int, stop: int,
+                            file_offset: int, size: int) -> dict:
+    """Conservative fileset coordinate systems. Never silently pick ambiguous data."""
+    result = {'state': 'fora_da_regiao', 'chosen_model': None, 'offset': None,
+              'candidate_offsets': {}, 'hash_sha256': None}
+    if size < 0 or size > V008_MAX_BLOB or file_offset < 0:
+        result['state'] = 'limite_excedido'
+        return result
+    for model, point in (('fileset_absoluto', file_offset),
+                         ('imagem_relativa', start + file_offset)):
+        # Confine to selected fileset image to avoid hashing another image as this one.
+        if start <= point <= stop and point + size <= stop and point + size <= len(data):
+            result['candidate_offsets'][model] = point
+    found = sorted(set(result['candidate_offsets'].values()))
+    if not found:
+        return result
+    if len(found) > 1:
+        result['state'] = 'offset_ambiguo'
+        return result
+    point = found[0]
+    result.update({'state': 'resolvido', 'offset': point,
+                   'chosen_model': ','.join(result['candidate_offsets']),
+                   'hash_sha256': hashlib.sha256(memoryview(data)[point:point + size]).hexdigest()})
+    return result
+
+
+def _v008_parse_starts(buf: bytes) -> dict:
+    """LC_FUNCTION_STARTS stores ULEB deltas; this does not identify function ABI."""
+    position, cursor, count = 0, 0, 0
+    first, last, terminated = None, None, False
+    try:
+        while position < len(buf) and count < V008_MAX_FUNCS:
+            delta, position = _abi_uleb(buf, position, len(buf))
+            if delta == 0:
+                terminated = True
+                break
+            cursor += delta
+            if cursor > (1 << 63):
+                return {'state': 'delta_excessivo', 'count': count}
+            if first is None:
+                first = cursor
+            last = cursor
+            count += 1
+        status = 'delimitado' if terminated else ('limite_excedido' if count == V008_MAX_FUNCS else 'sem_terminador')
+        return {'state': status, 'count': count, 'first_delta_address': first,
+                'last_delta_address': last,
+                'note': 'Offsets delta relativos ao texto conforme Mach-O; não demonstram assinatura, protótipo ou ABI de funções.'}
+    except (ValueError, OverflowError, IndexError, struct.error):
+        return {'state': 'uleb_invalido', 'count': count}
+
+
+def _v008_scan_image(data: bytes, name: str, start: int, stop: int) -> dict:
+    row = {'identifier': name, 'image_offset': start, 'image_region_end': stop,
+           'status': 'indisponivel', 'mappings': {}, 'sections': {},
+           'load_commands': {}, 'notes': [], 'function_starts': {'state': 'comando_ausente'},
+           'binary_abi_proven': False}
+    if not (0 <= start < stop <= len(data)) or stop - start < 32:
+        row['notes'].append('Região de imagem fora dos limites.')
+        return row
+    magic = data[start:start + 4]
+    if magic not in (MH_MAGIC_64, MH_CIGAM_64):
+        row['notes'].append('Assinatura Mach-O não encontrada.')
+        return row
+    endian = '<' if magic == MH_MAGIC_64 else '>'
+    try:
+        header = struct.unpack_from(endian + 'IiiIIIII', data, start)
+    except struct.error:
+        return row
+    num_cmd, cmd_bytes = header[4], header[5]
+    row['cpu_type'] = header[1]
+    row['cpu_subtype'] = header[2]
+    row['macho_filetype'] = header[3]
+    if num_cmd > V008_LIMIT_CMDS or cmd_bytes > stop - start - 32:
+        row['status'] = 'load_commands_invalidos'
+        return row
+    pos, endcmd = start + 32, start + 32 + cmd_bytes
+    pending_sections = []
+    pending_link_data = []
+    for _ in range(num_cmd):
+        if pos + 8 > endcmd:
+            row['status'] = 'load_commands_truncados'
+            return row
+        cmd, size = struct.unpack_from(endian + 'II', data, pos)
+        if size < 8 or pos + size > endcmd:
+            row['status'] = 'load_commands_invalidos'
+            return row
+        if cmd == LC_SEGMENT_64:
+            if size < 72:
+                row['status'] = 'segmento_invalido'
+                return row
+            segname = _v008_str16(data[pos+8:pos+24])
+            vmaddr, vmsize, fileoff, filesize = struct.unpack_from(endian + 'QQQQ', data, pos+24)
+            nsects = struct.unpack_from(endian + 'I', data, pos+64)[0]
+            if nsects > 8192 or 72 + nsects * 80 > size:
+                row['status'] = 'secoes_invalidas'
+                return row
+            row['mappings'][segname] = {'vmaddr': vmaddr, 'vmsize': vmsize,
+                                        'fileoff': fileoff, 'filesize': filesize,
+                                        'file_mapping': _v008_offset_candidates(data, start, stop, fileoff, filesize)
+                                        if filesize else {'state': 'sem_dados'}}
+            for j in range(nsects):
+                sectpos = pos + 72 + 80 * j
+                sectname = _v008_str16(data[sectpos:sectpos+16])
+                sectionsegment = _v008_str16(data[sectpos+16:sectpos+32])
+                address, length = struct.unpack_from(endian + 'QQ', data, sectpos+32)
+                file_offset = struct.unpack_from(endian + 'I', data, sectpos+48)[0]
+                flags = struct.unpack_from(endian + 'I', data, sectpos+64)[0]
+                if sectname in ('__text', '__unwind_info', '__eh_frame', '__const', '__cstring'):
+                    pending_sections.append((sectionsegment + ',' + sectname, file_offset, length, address, flags))
+        elif cmd in (V008_LC_FUNCTION_STARTS, V008_LC_DATA_IN_CODE,
+                     V008_LC_DYLD_CHAINED_FIXUPS, V008_LC_DYLD_EXPORTS_TRIE, V008_LC_CODE_SIGNATURE):
+            if size >= 16:
+                off, count = struct.unpack_from(endian + 'II', data, pos+8)
+                key = {V008_LC_FUNCTION_STARTS: 'LC_FUNCTION_STARTS',
+                       V008_LC_DATA_IN_CODE: 'LC_DATA_IN_CODE',
+                       V008_LC_DYLD_CHAINED_FIXUPS: 'LC_DYLD_CHAINED_FIXUPS',
+                       V008_LC_DYLD_EXPORTS_TRIE: 'LC_DYLD_EXPORTS_TRIE',
+                       V008_LC_CODE_SIGNATURE: 'LC_CODE_SIGNATURE'}[cmd]
+                pending_link_data.append((key, off, count))
+        pos += size
+    row['status'] = 'macho_lido'
+    for key, off, length, addr, flags in pending_sections:
+        m = _v008_offset_candidates(data, start, stop, off, length)
+        row['sections'][key] = {'size': length, 'vmaddr': addr, 'flags': flags,
+                                'file_mapping': m}
+    for key, off, length in pending_link_data:
+        mapping = _v008_offset_candidates(data, start, stop, off, length)
+        row['load_commands'][key] = {'data_size': length, 'file_mapping': mapping}
+        if key == 'LC_FUNCTION_STARTS':
+            row['function_starts'] = {'state': mapping['state'], 'data_size': length}
+            if mapping['state'] == 'resolvido':
+                start_at = mapping['offset']
+                row['function_starts'] = {**_v008_parse_starts(data[start_at:start_at+length]),
+                                          'data_size': length,
+                                          'mapping': mapping['chosen_model']}
+    row['notes'].append('Hashes de seções são fingerprints exatos de bytes, não prova de equivalência ABI.')
+    if not row['sections'].get('__TEXT,__text'):
+        row['notes'].append('Nenhuma seção __TEXT,__text observada nos comandos desta imagem.')
+    return row
+
+
+def _v008_scan_decoded(data: bytes, description: str) -> dict:
+    entries, _ = _read_macho(data)
+    by_offset = {0: 'com.apple.kernel'}
+    for item in entries:
+        pos = item.get('offset')
+        if isinstance(pos, int) and pos > 0 and pos < len(data) and pos not in by_offset:
+            by_offset[pos] = str(item.get('name', 'unknown'))
+    sorted_offsets = sorted(by_offset)
+    if len(sorted_offsets) > ABI_MAX_IMAGES:
+        raise KernelFormatError('Excesso de imagens Mach-O para análise ABI 2.0.')
+    images = {}
+    for idx, pos in enumerate(sorted_offsets):
+        limit = sorted_offsets[idx + 1] if idx + 1 < len(sorted_offsets) else len(data)
+        name = by_offset[pos]
+        images[name] = _v008_scan_image(data, name, pos, limit)
+    return {'format': description, 'decoded_bytes': len(data),
+            'images_analyzed': len(images),
+            'images': images,
+            'limits': {'max_blob_bytes': V008_MAX_BLOB, 'per_image_commands': V008_LIMIT_CMDS},
+            'warnings': ['Offsets ambiguos nunca são escolhidos por heurística.',
+                         'Hash igual não é prova de compatibilidade ABI ou de assinatura do kernel.']}
+
+
+def _v008_scan_kernel(path: str | Path) -> dict:
+    p = Path(path).expanduser().resolve()
+    if p.stat().st_size > MAX_INPUT:
+        raise KernelFormatError('Arquivo maior que o limite máximo permitido.')
+    decoded, description, notes = _unwrap(p.read_bytes())
+    result = _v008_scan_decoded(decoded, description)
+    result['path'] = str(p)
+    result['parser_notes'] = notes
+    return result
+
+
+def _v008_section_outcome(before: dict | None, after: dict | None) -> dict:
+    if before is None or after is None:
+        return {'state': 'imagem_nao_observada_em_ambos'}
+    a = before.get('sections', {}).get('__TEXT,__text')
+    b = after.get('sections', {}).get('__TEXT,__text')
+    if not a or not b:
+        return {'state': 'secao_text_nao_observada_em_ambos'}
+    fa, fb = a['file_mapping'], b['file_mapping']
+    if fa.get('state') != 'resolvido' or fb.get('state') != 'resolvido':
+        return {'state': 'mapeamento_de_secoes_inconclusivo',
+                'origem': fa['state'], 'destino': fb['state']}
+    return {'state': 'bytes_iguais' if fa['hash_sha256'] == fb['hash_sha256'] and a['size'] == b['size'] else 'bytes_diferentes',
+            'origin_sha256': fa['hash_sha256'], 'target_sha256': fb['hash_sha256'],
+            'origin_size': a['size'], 'target_size': b['size'],
+            'interpretation': 'Igualdade ou diferença de bytes não equivale a ABI compatível/incompatível.'}
+
+
+def make_abi_delta_v008(scans: dict[str, dict]) -> dict:
+    a = scans.get('ORIGEM', {}).get('images', {})
+    b = scans.get('DESTINO', {}).get('images', {})
+    pairs = []
+    for name in sorted(set(a) | set(b)):
+        old, new = a.get(name), b.get(name)
+        control = scans.get('CONTROLE', {}).get('images', {}).get(name)
+        pairs.append({'identifier': name,
+                      'control': {'status': control.get('status'),
+                                  'function_starts': control['function_starts']} if control else None,
+                      'origin_vs_control': _v008_section_outcome(old, control) if scans.get('CONTROLE') else None,
+                      'control_vs_target': _v008_section_outcome(control, new) if scans.get('CONTROLE') else None,
+                      'origin': {'status': old.get('status'), 'function_starts': old['function_starts'],
+                                 'text_mapping': old.get('sections', {}).get('__TEXT,__text',{}).get('file_mapping',{}).get('state')}
+                                 if old else None,
+                      'target': {'status': new.get('status'), 'function_starts': new['function_starts'],
+                                 'text_mapping': new.get('sections', {}).get('__TEXT,__text',{}).get('file_mapping',{}).get('state')}
+                                 if new else None,
+                      'text_comparison': _v008_section_outcome(old, new)})
+    types = Counter(x['text_comparison']['state'] for x in pairs)
+    control_types_ab = Counter(x['origin_vs_control']['state'] for x in pairs) if scans.get('CONTROLE') else {}
+    control_types_bc = Counter(x['control_vs_target']['state'] for x in pairs) if scans.get('CONTROLE') else {}
+    return {'iosla_version': APP_VERSION, 'mode': 'Mach-O ABI 2.0: fingerprint estrutural, sem inferência de compatibilidade',
+            'generated_at': datetime.now(timezone.utc).isoformat(),
+            'summary': {'images_compared': len(pairs), 'states': dict(types),
+                        'origin_images': len(a), 'target_images': len(b),
+                        'control_images': len(scans.get('CONTROLE', {}).get('images', {})),
+                        'origin_vs_control_states': dict(control_types_ab),
+                        'control_vs_target_states': dict(control_types_bc)},
+            'scans': {label: {'path': row.get('path'), 'format': row.get('format'),
+                              'images_analyzed': row.get('images_analyzed'), 'parser_notes': row.get('parser_notes', [])}
+                      for label, row in scans.items()},
+            'images': pairs,
+            'warnings': ['__text é comparada por hash apenas quando offsets são resolvidos sem ambiguidade.',
+                         'LC_FUNCTION_STARTS não fornece protótipos; zero símbolos não prova compatibilidade.',
+                         'O analisador não reconstitui uma KEXT carregável, nem verifica PAC, vtables ou assinatura.']}
+
+
+def _v008_markdown_abi(report: dict) -> str:
+    s = report['summary']
+    lines = ['# IOSLA v0.0.8 — Binary ABI Analyzer 2.0', '',
+             '**Somente leitura. Nenhuma compatibilidade ABI foi demonstrada.**', '',
+             f"- Imagens comparadas: **{s['images_compared']}**",
+             f"- Imagens origem/destino: {s['origin_images']} / {s['target_images']}", '',
+             '## Estados observados', '']
+    lines.extend(f'- {label}: **{count}**' for label,count in sorted(s['states'].items()))
+    if s['control_images']:
+        lines.extend(['','## Comparação ABI com controle opcional', '',
+                      '- Imagens do controle: **'+str(s['control_images'])+'**',
+                      '- A↔B (XS ↔ iPhone 11 antigo): '+str(s['origin_vs_control_states']),
+                      '- B↔C (iPhone 11 antigo ↔ recente): '+str(s['control_vs_target_states'])])
+    lines.extend(['', '## Componentes prioritários', '',
+                  '| Driver | Comparação de __text | Function starts (origem/destino) |',
+                  '|---|---|---|'])
+    focus = {'com.apple.AGXG11P','com.apple.AGXG12P','com.apple.driver.AppleT8020',
+             'com.apple.iokit.IOGPUFamily','com.apple.iokit.IOSurface',
+             'com.apple.driver.AppleARMPlatform','com.apple.kernel'}
+    for item in report['images']:
+        if item['identifier'] in focus:
+            p,q=item['origin'],item['target']
+            va = str(p['function_starts'].get('count','?')) if p else 'n/d'
+            vb = str(q['function_starts'].get('count','?')) if q else 'n/d'
+            lines.append(f"| `{item['identifier']}` | {item['text_comparison']['state']} | {va} / {vb} |")
+    lines.extend(['','## Limitações', '']+['- '+w for w in report['warnings']])
+    return '\n'.join(lines)+'\n'
+
+
+def _v008_sign(k: Kext | None) -> tuple | None:
+    if k is None:
+        return None
+    return (k.version, tuple(sorted(k.dependencies.items())),
+            k.region_sha256 or '', tuple(sorted(k.personalities)))
+
+
+def _v008_triage_state(a: Kext | None,b: Kext | None) -> str:
+    if a is None and b is None:
+        return 'ausentes_ambos_inventarios'
+    if a is None:
+        return 'nao_observada_a_origem'
+    if b is None:
+        return 'nao_observada_o_destino'
+    if _v008_sign(a)==_v008_sign(b):
+        return 'metadados_iguais_no_inventario'
+    return 'metadados_diferentes_no_inventario'
+
+
+def make_triangulation_v008(snaps: dict[str, Snapshot], inputs: dict | None = None) -> dict:
+    a,b,c=(snaps.get(x) for x in ('ORIGEM','CONTROLE','DESTINO'))
+    warnings=[]
+    if a is None or b is None or c is None:
+        warnings.append('São necessários três inventários interpretáveis. Controle pode ser carregado depois.')
+    valid_a12_vs_a13 = bool(a and b and a.ios_version==b.ios_version and a.build==b.build)
+    same_device = bool(b and c and b.device==c.device and b.device=='iPhone12,1')
+    if b and a and not valid_a12_vs_a13:
+        warnings.append('Controle e XS diferem em versão/build: A↔B não isola hardware; não atribuir causalidade.')
+    if b and c and not same_device:
+        warnings.append('Controle e destino não são do mesmo modelo: B↔C não controla o hardware.')
+    comparisons=[]
+    if a and b and c:
+        for name in sorted(set(a.kexts)|set(b.kexts)|set(c.kexts)):
+            k1,k2,k3=(row.kexts.get(name) for row in (a,b,c))
+            ab,bc,ac=(_v008_triage_state(*two) for two in ((k1,k2),(k2,k3),(k1,k3)))
+            if not valid_a12_vs_a13 or not same_device:
+                pattern='controle_nao_comparavel'
+            elif any(x is None for x in (k1,k2,k3)):
+                pattern='inventario_parcial_ou_nao_observada'
+            elif ab=='metadados_diferentes_no_inventario' and bc=='metadados_iguais_no_inventario':
+                pattern='diferenca_observada_entre_aparelhos_mesma_build'
+            elif ab=='metadados_iguais_no_inventario' and bc=='metadados_diferentes_no_inventario':
+                pattern='diferenca_observada_entre_versoes_mesmo_aparelho'
+            elif ab=='metadados_diferentes_no_inventario' and bc=='metadados_diferentes_no_inventario':
+                pattern='diferencas_nas_duas_comparacoes'
+            else:
+                pattern='sem_diferencas_nos_metadados_observados'
+            comparisons.append({'identifier':name,'xs_vs_control':ab,'control_vs_recent':bc,
+                                'xs_vs_recent':ac,'pattern':pattern,
+                                'versions':{'XS':k1.version if k1 else None,
+                                            'CONTROL':k2.version if k2 else None,
+                                            'RECENT':k3.version if k3 else None}})
+    grouped=Counter(row['pattern'] for row in comparisons)
+    return {'iosla_version':APP_VERSION, 'generated_at':datetime.now(timezone.utc).isoformat(),
+            'mode':'triangulação de inventários; sem inferência causal automática',
+            'control_available':b is not None,
+            'conditions': {'xs_and_control_same_version_and_build':valid_a12_vs_a13,
+                           'control_and_recent_same_model':same_device},
+            'firmwares':{label:{'device':s.device,'version':s.ios_version,'build':s.build,
+                                 'kexts':len(s.kexts)} if s else None
+                        for label,s in (('ORIGEM',a),('CONTROLE',b),('DESTINO',c))},
+            'summary':{'compared_identifiers':len(comparisons),'patterns':dict(grouped)},
+            'comparison':comparisons, 'warnings':warnings+[
+              'Classificação é observação de metadados; hashes de fileset podem mudar por layout.',
+              'Inventários parciais: não observado NÃO equivale a ausente do sistema.',
+              'Mesmo modelo e build reduzem variáveis, mas não comprovam a causa das diferenças.']}
+
+
+def _v008_triangulation_md(report: dict) -> str:
+    rows=['# IOSLA v0.0.8 — Firmware Triangulation','',
+          '**Comparação observacional de 3 firmwares. Nenhum port comprovado.**','',
+          '## Firmware A / B / C','']
+    for label,inf in report['firmwares'].items():
+        rows.append(f"- {label}: " + (f"{inf['device']} · iOS {inf['version']} · build {inf['build']} · {inf['kexts']} KEXTs" if inf else 'não fornecido'))
+    rows.extend(['','## Condições de comparabilidade','',
+                 f"- XS e controle mesma versão/build: {report['conditions']['xs_and_control_same_version_and_build']}",
+                 f"- Controle e destino mesmo modelo: {report['conditions']['control_and_recent_same_model']}",
+                 '', '## Padrões observados', ''])
+    rows.extend('- '+key+': **'+str(val)+'**' for key,val in sorted(report['summary']['patterns'].items()))
+    rows.extend(['','## Drivers de interesse', '', '| Driver | A↔B | B↔C | Padrão |', '|---|---|---|---|'])
+    patterns=('AGX','T8020','IOGPU','IOSurface','AppleARMPlatform','ANE')
+    for item in report['comparison']:
+        if any(x.casefold() in item['identifier'].casefold() for x in patterns):
+            rows.append(f"| `{item['identifier']}` | {item['xs_vs_control']} | {item['control_vs_recent']} | {item['pattern']} |")
+    rows.extend(['','## Avisos','']+['- '+w for w in report['warnings']])
+    return '\n'.join(rows)+'\n'
+
+
+def make_deep_driver_v008(driver: str, snaps: dict[str, Snapshot], scans: dict[str,dict],
+                           port: dict | None = None) -> dict:
+    a=snaps.get('ORIGEM'); b=snaps.get('DESTINO')
+    row=(a.kexts.get(driver) if a else None)
+    if row is None:
+        raise IOSLAError('KEXT não encontrada no inventário da origem: '+driver)
+    old_img=scans.get('ORIGEM',{}).get('images',{}).get(driver)
+    target_candidates=[driver]
+    for item in (port or {}).get('drivers',[]):
+        if item.get('identifier')==driver:
+            target_candidates += [cand['identifier'] for cand in item.get('newer_driver_candidate_on_original_board',[])]
+            port_entry=item
+            break
+    else:
+        port_entry=None
+    target_candidates=list(dict.fromkeys(target_candidates))
+    dest_images=scans.get('DESTINO',{}).get('images',{})
+    target_img=[{'identifier':name, 'image':dest_images.get(name),
+                 'fingerprint_comparison':_v008_section_outcome(old_img,dest_images.get(name))}
+                for name in target_candidates if name in dest_images]
+    missing=[name for name in row.dependencies if not b or name not in b.kexts]
+    present=[{'identifier':name,'requested_version':version,
+              'reported_target_version':b.kexts[name].version} for name,version in sorted(row.dependencies.items())
+              if b and name in b.kexts]
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+            'driver':driver,'source_version':row.version, 'source_image':old_img,
+            'target_candidate_images':target_img,
+            'dependencies':{'total':len(row.dependencies),'nominally_observed_in_target':present,
+                            'not_observed_in_target_inventory':missing},
+            'matching_rules':row.personality_matching,
+            'portability_evidence':port_entry,
+            'readiness':{'binary_abi':'nao_demonstrada', 'iokit_runtime':'nao_verificado',
+                         'firmware_microcontrollers':'nao_verificado',
+                         'secure_boot_signature':'nao_verificado'},
+            'notes':['O nome e a versão de uma dependência não demonstram sua ABI.',
+                     'Function starts e hashes são dados de estrutura, não protótipos ou símbolos.',
+                     'Nenhum arquivo de KEXT é construído, modificado ou carregado.']}
+
+
+def _v008_deep_md(d:dict)->str:
+    abi=d['source_image'] or {}
+    lines=[f"# IOSLA v0.0.8 — Driver Deep Inspection: `{d['driver']}`",'',
+           '**Estudo estático somente leitura — sem comprovação de port.**','',
+           f"- Versão declarada: {d['source_version']}",
+           f"- Dependências: {d['dependencies']['total']}",
+           f"- Encontradas nominalmente no destino: {len(d['dependencies']['nominally_observed_in_target'])}",
+           f"- Não observadas: {len(d['dependencies']['not_observed_in_target_inventory'])}",
+           f"- Mach-O da origem: {abi.get('status','não analisado')}",
+           f"- LC_FUNCTION_STARTS: {abi.get('function_starts',{}).get('state','não examinado')}",
+           '', '## Dependências não observadas','']
+    lines += ['- `'+x+'`' for x in d['dependencies']['not_observed_in_target_inventory']] or ['- Nenhuma no inventário parcial.']
+    lines+=['','## Candidatos de kernel recente (assinatura __text)','']
+    for x in d['target_candidate_images']:
+        lines.append('- `'+x['identifier']+'`: '+x['fingerprint_comparison']['state'])
+    if not d['target_candidate_images']:
+        lines.append('- Nenhum candidato examinado com ABI 2.0.')
+    lines+=['','## Lacunas ainda abertas','']
+    lines += ['- '+k+': '+v for k,v in d['readiness'].items()]
+    lines+=['','## Observações','']+['- '+n for n in d['notes']]
+    return '\n'.join(lines)+'\n'
+
+
+def _v008_export(prefix:str, report:dict, fmt, directory:Path=REPORT_ROOT)->tuple[Path,Path]:
+    directory.mkdir(parents=True,exist_ok=True)
+    stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+    jp=directory/f'IOSLA_{prefix}_{stamp}.json'
+    md=directory/f'IOSLA_{prefix}_{stamp}.md'
+    jp.write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
+    md.write_text(fmt(report),encoding='utf-8')
+    return jp,md
+
+
+_v008_previous_analyze = Terminal.analyze
+
+
+def _v008_add_summary(self, key: str, files:tuple[Path,Path], detail:dict) -> None:
+    self.generated.extend(files)
+    if self.last_summary is None:
+        return
+    self.last_summary[key]=detail
+    self.last_summary['iosla_version']=APP_VERSION
+    self.last_summary.setdefault('files',[]).extend(str(p) for p in files)
+    for f in self.generated:
+        if f.name.startswith('IOSLA_RESUMO_') and f.suffix=='.json':
+            f.write_text(json.dumps(self.last_summary,indent=2,ensure_ascii=False),encoding='utf-8')
+        elif f.name.startswith('IOSLA_RESUMO_') and f.suffix=='.md':
+            with f.open('a',encoding='utf-8') as output:
+                output.write('\n## '+key.replace('_',' ').title()+' (v0.0.8)\n\n')
+                output.write('- Relatório: `'+files[1].name+'`\n')
+
+
+def _v008_analyze(self):
+    _v008_previous_analyze(self)
+    self.v008_scans={}
+    self.v008_port=_v006_find_json(self.generated,'IOSLA_PORTABILIDADE_')
+    print('\n  [ABI2] Analisando a estrutura dos Mach-O fileset...')
+    for label in ('ORIGEM','DESTINO'):
+        snapshot=self.snapshots.get(label)
+        if not snapshot or not snapshot.kernel_path:
+            print('  [ABI2]',label,'sem kernel interpretável; resultado parcial.')
+            continue
+        try:
+            self.v008_scans[label]=_v008_scan_kernel(snapshot.kernel_path)
+            print('  [ABI2]',label,':',self.v008_scans[label]['images_analyzed'],'imagens.')
+        except (KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+            print('  [ABI2]',label,': não interpretado —',str(exc))
+    if 'CONTROLE' in self.inputs:
+        print('\n  [CTRL] Lendo IPSW de controle opcional...')
+        control,diag=self._snapshot('CONTROLE')
+        self.generated.append(write_diagnostic('controle_ultima_analise',diag))
+        if control:
+            self.snapshots['CONTROLE']=control
+            print('  [CTRL] KEXTs:',len(control.kexts),'· iOS',control.ios_version)
+            try:
+                self.v008_scans['CONTROLE']=_v008_scan_kernel(control.kernel_path)
+                print('  [ABI2] CONTROLE:',self.v008_scans['CONTROLE']['images_analyzed'],'imagens.')
+            except (KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+                print('  [ABI2] Controle não interpretável:',str(exc))
+        else:
+            print('  [CTRL] Não foi possível interpretar kernelcache; triangulação parcial.')
+    delta=make_abi_delta_v008(self.v008_scans)
+    files=_v008_export('ABI_DELTA',delta,_v008_markdown_abi)
+    _v008_add_summary(self,'abi_2_analysis',files,delta['summary'])
+    print('  [ABI2] Relatório:',files[1].name)
+    tri=make_triangulation_v008(self.snapshots,self.inputs)
+    control_files=_v008_export('TRIANGULACAO',tri,_v008_triangulation_md)
+    _v008_add_summary(self,'firmware_triangulation',control_files,{
+        'conditions':tri['conditions'],'summary':tri['summary'],'control_available':tri['control_available']})
+    print('  [TRI] Relatório:',control_files[1].name, '(controle opcional).')
+    if self.snapshots.get('ORIGEM') and 'com.apple.AGXG11P' in self.snapshots['ORIGEM'].kexts:
+        deep=make_deep_driver_v008('com.apple.AGXG11P',self.snapshots,self.v008_scans,self.v008_port)
+        deep_files=_v008_export('DRIVER_DEEP',deep,_v008_deep_md)
+        _v008_add_summary(self,'deep_driver',deep_files,{'driver':deep['driver']})
+        print('  [DEEP] Dossiê inicial:',deep_files[1].name)
+    print('  [INFO] KEXTs não foram modificadas; ABI/assinatura/boot não demonstrados.')
+
+
+Terminal.analyze=_v008_analyze
+
+
+def _v008_show(self):
+    print('\n'+Style.BLUE+'═'*66+Style.RESET)
+    print('       IOSLA v0.0.9 | FILESET MAPPING + ABI RECOVERY')
+    print('                Offline · Somente leitura')
+    print(Style.BLUE+'═'*66+Style.RESET)
+    for key,label in (('ORIGEM','iPhone XS · A12 · iOS 18'),
+                      ('DESTINO','iPhone 11 · A13 · iOS recente'),
+                      ('CONTROLE','iPhone 11 · A13 · iOS 18 (opcional)')):
+        item=self.inputs.get(key)
+        if item:
+            m=item['meta']
+            print(f" {label:39} [OK] {m['ios_version']} / {m['build']}")
+        else:
+            print(f" {label:39} [ ] Aguardando")
+    print('''\n [1] Arrastar IPSW do iPhone XS
+ [2] Arrastar IPSW recente do iPhone 11
+ [3] ANALISAR TUDO E GERAR RELATÓRIOS
+ [4] Ver resultados e abrir pasta
+ [5] Adicionar IPSW de controle: iPhone 11 / iOS 18
+ [6] Inspeção profunda de uma KEXT (após análise)
+ [0] Sair\n''')
+
+
+Terminal.show=_v008_show
+
+
+def _v008_deep_interactive(self):
+    if not self.snapshots.get('ORIGEM'):
+        print(' Execute primeiro [3] para examinar o inventário de KEXTs.')
+        return
+    raw=input(' ID da KEXT (Enter = com.apple.AGXG11P): ').strip()
+    identifier=raw or 'com.apple.AGXG11P'
+    scans=getattr(self,'v008_scans',{})
+    report=make_deep_driver_v008(identifier,self.snapshots,scans,getattr(self,'v008_port',None))
+    files=_v008_export('DRIVER_DEEP',report,_v008_deep_md)
+    _v008_add_summary(self,'deep_driver',files,{'driver':identifier})
+    print(' [DEEP] Relatório:',files[1])
+
+
+def _v008_run(self):
+    ensure_home()
+    while True:
+        try:
+            self.show()
+            option=input(Style.CYAN+' Número > '+Style.RESET).strip()
+            if option=='0':
+                print(' IOSLA encerrado.')
+                break
+            if option in ('1','2','5'):
+                label={'1':'ORIGEM','2':'DESTINO','5':'CONTROLE'}[option]
+                self.load(label)
+                if label=='CONTROLE' and label in self.inputs:
+                    meta=self.inputs[label]['meta']
+                    if not str(meta.get('ios_version','')).startswith('18.'):
+                        print(' [AVISO] Firmware de controle não é iOS 18; triangulação terá ressalvas.')
+                continue
+            if option=='3':
+                self.analyze()
+            elif option=='4':
+                self.results()
+            elif option=='6':
+                _v008_deep_interactive(self)
+            else:
+                print(' [AVISO] Escolha um número entre 0 e 6.')
+        except (EOFError,KeyboardInterrupt):
+            print('\n IOSLA encerrado.')
+            break
+        except (IOSLAError,KernelFormatError,OSError,ValueError,zipfile.BadZipFile) as exc:
+            print(Style.RED+' [ERRO] '+str(exc)+Style.RESET)
+
+
+Terminal.run=_v008_run
+
+
+_v008_original_main = main
+
+
+def _v008_self_test():
+    import tempfile
+    # Fileset with minimal Mach-O, LC_FUNCTION_STARTS and a bounded, readable __text.
+    h=bytearray(struct.pack('<IiiIIIII',0xfeedfacf,CPU_TYPE_ARM64,0,0,2,72+16,0,0))
+    seg=struct.pack('<II16sQQQQiiII',LC_SEGMENT_64,72,b'__TEXT'.ljust(16,b'\x00'),0,100,0,100,7,5,0,0)
+    h.extend(seg)
+    h.extend(struct.pack('<IIII',V008_LC_FUNCTION_STARTS,16,144,4))
+    h.extend(b'\x00'*(144-len(h)))
+    h.extend(b'\x01\x03\x05\x00')
+    h.extend(b'\x00'*16)
+    x=_v008_scan_decoded(bytes(h),'synthetic')
+    assert x['images_analyzed']==1
+    assert x['images']['com.apple.kernel']['function_starts']['count']==3
+    assert x['images']['com.apple.kernel']['function_starts']['state']=='delimitado'
+    assert _v008_offset_candidates(b'abcdefghij',2,9,3,2)['state']=='offset_ambiguo'
+    assert _v008_offset_candidates(b'abcdefghij',0,10,3,2)['state']=='resolvido'
+    def k(name,version):
+        return Kext(name,version,dependencies={'com.apple.test':'1'})
+    a=Snapshot('ORIGEM','test','synthetic',{'com.apple.A':k('com.apple.A','1'),
+                                            'com.apple.B':k('com.apple.B','1')},ios_version='18.7',build='A',device='iPhone11,2')
+    b=Snapshot('CONTROLE','test','synthetic',{'com.apple.A':k('com.apple.A','2'),
+                                             'com.apple.B':k('com.apple.B','1')},ios_version='18.7',build='A',device='iPhone12,1')
+    c=Snapshot('DESTINO','test','synthetic',{'com.apple.A':k('com.apple.A','2'),
+                                            'com.apple.B':k('com.apple.B','3')},ios_version='27',build='B',device='iPhone12,1')
+    tri=make_triangulation_v008({'ORIGEM':a,'CONTROLE':b,'DESTINO':c})
+    aa=next(r for r in tri['comparison'] if r['identifier']=='com.apple.A')
+    bb=next(r for r in tri['comparison'] if r['identifier']=='com.apple.B')
+    assert aa['pattern']=='diferenca_observada_entre_aparelhos_mesma_build'
+    assert bb['pattern']=='diferenca_observada_entre_versoes_mesmo_aparelho'
+    d=make_deep_driver_v008('com.apple.A',{'ORIGEM':a,'DESTINO':c},{})
+    assert d['dependencies']['total']==1
+    with tempfile.TemporaryDirectory(prefix='iosla8_') as td:
+        folder=Path(td)
+        for prefix,data,renderer in [('ABI_DELTA',make_abi_delta_v008({}),_v008_markdown_abi),
+                                      ('TRIANGULACAO',tri,_v008_triangulation_md),
+                                      ('DRIVER_DEEP',d,_v008_deep_md)]:
+            p,q=_v008_export(prefix,data,renderer,folder)
+            assert p.is_file() and q.is_file()
+            assert json.loads(p.read_text())['iosla_version']==APP_VERSION
+    print('IOSLA v0.0.8: ABI offsets, function starts, triangulação e dossiês OK (sintéticos).')
+
+
+
+def main():
+    if len(sys.argv)==2 and sys.argv[1]=='--self-test':
+        _v008_original_main()
+        _v008_self_test()
+        return
+    if len(sys.argv)==4 and sys.argv[1]=='--abi2-from-kernels':
+        ensure_home()
+        scans={}
+        for label,path in (('ORIGEM',sys.argv[2]),('DESTINO',sys.argv[3])):
+            scans[label]=_v008_scan_kernel(path)
+        report=make_abi_delta_v008(scans)
+        files=_v008_export('ABI_DELTA',report,_v008_markdown_abi)
+        print('Relatórios ABI 2.0:',*files,sep='\n - ')
+        return
+    _v008_original_main()
+
+
+# ==========================================================================
+# IOSLA v0.0.9 — MACH-O FILESET MAPPING & ABI RECOVERY
+# This analyzer is offline, read-only; it never patches, signs or boots firmware.
+# ==========================================================================
+
+V009_MAX_COMMANDS = 8192
+V009_MAX_SECTION_HASH = 32 * 1024 * 1024
+V009_MAX_SEGMENTS = 512
+V009_MAX_SECTIONS = 8192
+
+
+def _v009_within(point: int, size: int, limit: int) -> bool:
+    return isinstance(point, int) and isinstance(size, int) and 0 <= point <= limit and 0 <= size <= limit - point
+
+
+def _v009_choose_coordinate(data: bytes, start: int, segments: list[dict], endian: str) -> dict:
+    """Establish one fileset offset convention using evidence at the Mach-O header.
+
+    A child fileset image's segments may be stored FAR outside the next
+    LC_FILESET_ENTRY offset.  Only its load command header is limited by the
+    neighbouring image start.  Do not guess from a distant segment's bytes.
+    """
+    text_segments = [s for s in segments if s['name'] == '__TEXT' and s['filesize'] >= 32]
+    methods = {'fileset_absoluto': lambda s: s['fileoff'],
+               'imagem_relativa': lambda s: start + s['fileoff']}
+    found = []
+    for kind, callback in methods.items():
+        for seg in text_segments:
+            point = callback(seg)
+            if point == start and _v009_within(point, 32, len(data)) and data[point:point+4] in (MH_MAGIC_64, MH_CIGAM_64):
+                found.append(kind)
+    if start == 0 and found:
+        # At the root, both coordinate systems are numerically identical.
+        return {'state': 'resolvido', 'model': 'fileset_absoluto', 'anchor_models': sorted(set(found)),
+                'anchor_offset': start}
+    if len(set(found)) == 1:
+        return {'state': 'resolvido', 'model': found[0], 'anchor_models': found, 'anchor_offset': start}
+    if len(set(found)) > 1:
+        return {'state': 'ambiguidade_entre_modelos', 'model': None, 'anchor_models': sorted(set(found))}
+    return {'state': 'ancora_texto_nao_confirmada', 'model': None, 'anchor_models': []}
+
+
+def _v009_map(data: bytes, image_start: int, coordinate: dict,
+              offset: int, length: int, *, max_hash: int = V009_MAX_SECTION_HASH,
+              containment: dict | None = None) -> dict:
+    result = {'state': 'inconclusivo', 'chosen_model': coordinate.get('model'),
+              'offset': None, 'hash_sha256': None, 'candidate_offsets': {}}
+    if length < 0 or offset < 0:
+        result['state'] = 'valor_invalido'
+        return result
+    model = coordinate.get('model')
+    if coordinate.get('state') != 'resolvido' or model not in ('fileset_absoluto','imagem_relativa'):
+        result['state'] = 'sistema_de_offsets_nao_determinado'
+        return result
+    candidate = offset if model == 'fileset_absoluto' else image_start + offset
+    if not _v009_within(candidate, length, len(data)):
+        result['state'] = 'fora_do_kernelcache_decodificado'
+        return result
+    if containment is not None:
+        first, total = containment['offset'], containment['length']
+        if not (first <= candidate and candidate + length <= first + total):
+            result['state'] = 'fora_do_segmento_declarado'
+            return result
+    result['offset'] = candidate
+    result['candidate_offsets'][model] = candidate
+    if length > max_hash:
+        result['state'] = 'resolvido_sem_hash_limite'
+    else:
+        result['state'] = 'resolvido'
+        result['hash_sha256'] = hashlib.sha256(memoryview(data)[candidate:candidate+length]).hexdigest()
+    return result
+
+
+def _v009_scan_image(data: bytes, name: str, start: int, stop: int) -> dict:
+    result = {'identifier': name, 'image_offset': start, 'image_region_end': stop,
+              'status': 'indisponivel', 'coordinate_system': {}, 'mappings': {},
+              'sections': {}, 'load_commands': {}, 'function_starts': {'state': 'comando_ausente'},
+              'notes': [], 'binary_abi_proven': False}
+    if not (0 <= start < stop <= len(data)) or stop - start < 32:
+        result['notes'].append('Cabeçalho fora dos limites da entrada fileset.')
+        return result
+    magic = data[start:start+4]
+    if magic not in (MH_MAGIC_64, MH_CIGAM_64):
+        result['notes'].append('Assinatura Mach-O ausente na entrada fileset.')
+        return result
+    endian = '<' if magic == MH_MAGIC_64 else '>'
+    try:
+        h = struct.unpack_from(endian+'IiiIIIII', data, start)
+    except struct.error:
+        return result
+    result.update({'cpu_type': h[1], 'cpu_subtype': h[2], 'macho_filetype': h[3]})
+    commands, cmdsize = h[4], h[5]
+    if commands > V009_MAX_COMMANDS or cmdsize > stop-start-32:
+        result['status'] = 'load_commands_invalidos'
+        return result
+    pos, end = start+32, start+32+cmdsize
+    segments = []
+    sections = []
+    links = []
+    for _ in range(commands):
+        if pos + 8 > end:
+            result['status'] = 'load_commands_truncados'
+            return result
+        cmd, size = struct.unpack_from(endian+'II', data, pos)
+        if size < 8 or pos+size > end:
+            result['status'] = 'load_commands_invalidos'
+            return result
+        if cmd == LC_SEGMENT_64:
+            if size < 72 or len(segments) >= V009_MAX_SEGMENTS:
+                result['status'] = 'segmentos_invalidos'
+                return result
+            name16 = _v008_str16(data[pos+8:pos+24])
+            vmaddr, vmsize, fileoff, filesize = struct.unpack_from(endian+'QQQQ', data, pos+24)
+            nsects = struct.unpack_from(endian+'I', data, pos+64)[0]
+            if nsects > V009_MAX_SECTIONS or 72+nsects*80 > size:
+                result['status'] = 'secoes_invalidas'
+                return result
+            segments.append({'name': name16, 'vmaddr': vmaddr, 'vmsize': vmsize,
+                             'fileoff': fileoff, 'filesize': filesize})
+            for j in range(nsects):
+                p = pos+72+j*80
+                sn = _v008_str16(data[p:p+16])
+                sg = _v008_str16(data[p+16:p+32])
+                vm, length = struct.unpack_from(endian+'QQ',data,p+32)
+                off = struct.unpack_from(endian+'I',data,p+48)[0]
+                flags = struct.unpack_from(endian+'I',data,p+64)[0]
+                if sn in ('__text','__unwind_info','__eh_frame','__const','__cstring'):
+                    sections.append({'key':sg+','+sn,'segment':name16,'name':sn,
+                                     'vmaddr':vm,'size':length,'fileoff':off,'flags':flags})
+        elif cmd in (V008_LC_FUNCTION_STARTS, V008_LC_DATA_IN_CODE,
+                     V008_LC_DYLD_CHAINED_FIXUPS,V008_LC_DYLD_EXPORTS_TRIE,V008_LC_CODE_SIGNATURE):
+            if size >= 16:
+                off, n = struct.unpack_from(endian+'II',data,pos+8)
+                nm = {V008_LC_FUNCTION_STARTS:'LC_FUNCTION_STARTS',
+                      V008_LC_DATA_IN_CODE:'LC_DATA_IN_CODE',
+                      V008_LC_DYLD_CHAINED_FIXUPS:'LC_DYLD_CHAINED_FIXUPS',
+                      V008_LC_DYLD_EXPORTS_TRIE:'LC_DYLD_EXPORTS_TRIE',
+                      V008_LC_CODE_SIGNATURE:'LC_CODE_SIGNATURE'}[cmd]
+                links.append((nm,off,n))
+        pos += size
+    result['status'] = 'macho_lido'
+    coords = _v009_choose_coordinate(data,start,segments,endian)
+    result['coordinate_system'] = coords
+    for s in segments:
+        filem = (_v009_map(data,start,coords,s['fileoff'],s['filesize'])
+                 if s['filesize'] else {'state':'sem_dados'})
+        result['mappings'][s['name']] = {**s,'file_mapping':filem}
+    for s in sections:
+        seg = next((x for x in segments if x['name'] == s['segment']),None)
+        if seg is None or s['vmaddr'] < seg['vmaddr'] or s['size'] > seg['vmsize'] or s['vmaddr']-seg['vmaddr'] > seg['vmsize']-s['size']:
+            mapping = {'state':'secao_fora_do_intervalo_virtual_do_segmento'}
+        elif s['fileoff'] != seg['fileoff']+(s['vmaddr']-seg['vmaddr']):
+            mapping = {'state':'offset_da_secao_inconsistente_com_segmento'}
+        else:
+            segmap = result['mappings'][seg['name']]['file_mapping']
+            if segmap['state'] not in ('resolvido','resolvido_sem_hash_limite'):
+                mapping = {'state':'segmento_nao_mapeado'}
+            else:
+                mapping = _v009_map(data,start,coords,s['fileoff'],s['size'],
+                                    containment={'offset':segmap['offset'],'length':seg['filesize']})
+        result['sections'][s['key']] = {'size':s['size'],'vmaddr':s['vmaddr'],
+                                      'flags':s['flags'],'file_mapping':mapping}
+    linkedit = result['mappings'].get('__LINKEDIT',{}).get('file_mapping')
+    linkedit_info = result['mappings'].get('__LINKEDIT')
+    for nm,off,n in links:
+        if linkedit and linkedit.get('state') in ('resolvido','resolvido_sem_hash_limite'):
+            containment={'offset':linkedit['offset'],'length':linkedit_info['filesize']}
+        else:
+            containment=None
+        m = _v009_map(data,start,coords,off,n,max_hash=V009_MAX_SECTION_HASH,containment=containment)
+        if containment is None and m['state']=='resolvido':
+            m['validation_note']='Sem __LINKEDIT validado; localização apenas pelo modelo de offsets'
+        result['load_commands'][nm]={'data_size':n,'file_mapping':m}
+        if nm=='LC_FUNCTION_STARTS':
+            result['function_starts']={'state':m['state'],'data_size':n}
+            if m['state']=='resolvido':
+                start_at = m['offset']
+                fs = _v008_parse_starts(data[start_at:start_at+n])
+                result['function_starts']={**fs,'data_size':n,'mapping':m['chosen_model'],
+                                           'file_offset':start_at}
+                main_text=next((x for x in segments if x['name']=='__TEXT'),None)
+                if main_text and fs.get('count',0):
+                    result['function_starts']['base_vmaddr']=main_text['vmaddr']
+                    result['function_starts']['first_vmaddr']=main_text['vmaddr']+fs['first_delta_address']
+                    result['function_starts']['last_vmaddr']=main_text['vmaddr']+fs['last_delta_address']
+    if result['coordinate_system']['state'] != 'resolvido':
+        result['notes'].append('Modelo de offsets não ancorado no cabeçalho Mach-O; não foram calculados hashes.')
+    result['notes'].append('Segmentos podem estar fora da região contígua da entrada fileset; validação usa o kernelcache inteiro.')
+    result['notes'].append('Hashes e contagem de funções não comprovam compatibilidade ABI.')
+    return result
+
+
+def _v009_scan_decoded(data: bytes, description: str) -> dict:
+    entries, _ = _read_macho(data)
+    byoff = {0:'com.apple.kernel'}
+    for item in entries:
+        pos = item.get('offset')
+        if isinstance(pos,int) and 0 < pos < len(data) and pos not in byoff:
+            byoff[pos]=str(item.get('name','unknown'))
+    positions=sorted(byoff)
+    if len(positions)>ABI_MAX_IMAGES:
+        raise KernelFormatError('Mais imagens Mach-O do que o limite permitido.')
+    images={}
+    for i,start in enumerate(positions):
+        stop=positions[i+1] if i+1<len(positions) else len(data)
+        images[byoff[start]]=_v009_scan_image(data,byoff[start],start,stop)
+    mapped_text = sum(any(k.endswith(',__text') and v.get('file_mapping',{}).get('state')=='resolvido'
+                          for k,v in row['sections'].items()) for row in images.values())
+    functions = sum(row.get('function_starts',{}).get('state')=='delimitado' for row in images.values())
+    return {'format':description,'decoded_bytes':len(data),'images_analyzed':len(images),
+            'images':images,'summary':{'images_with_mapped_text':mapped_text,
+                                       'images_with_decoded_function_starts':functions},
+            'limits':{'max_section_hash_bytes':V009_MAX_SECTION_HASH,'max_commands':V009_MAX_COMMANDS},
+            'warnings':['Segmentos fileset são mapeados em coordenadas do kernelcache inteiro, confirmadas pelo cabeçalho __TEXT.',
+                        'Correspondência ou diferença de bytes não determina ABI, funcionalidade ou boot.']}
+
+
+# The original CLI calls _v008_scan_kernel; use v0.0.9 decode while retaining CLI compatibility.
+def _v009_scan_kernel(path: str | Path) -> dict:
+    p=Path(path).expanduser().resolve()
+    if p.stat().st_size>MAX_INPUT:
+        raise KernelFormatError('Kernelcache excede tamanho máximo suportado.')
+    data,fmt,notes=_unwrap(p.read_bytes())
+    report=_v009_scan_decoded(data,fmt)
+    report['path']=str(p)
+    report['parser_notes']=notes
+    return report
+
+_v008_scan_decoded=_v009_scan_decoded
+_v008_scan_kernel=_v009_scan_kernel
+
+
+def _v009_best_text(img:dict|None)->tuple[str,dict]|None:
+    if not img:
+        return None
+    sections=img.get('sections',{})
+    for name in ('__TEXT_EXEC,__text','__TEXT,__text'):
+        if name in sections and sections[name].get('file_mapping',{}).get('state')=='resolvido':
+            return name,sections[name]
+    for name in ('__TEXT_EXEC,__text','__TEXT,__text'):
+        if name in sections:
+            return name,sections[name]
+    return None
+
+
+def _v009_outcome(a:dict|None,b:dict|None)->dict:
+    if a is None or b is None:
+        return {'state':'imagem_nao_observada_em_ambos'}
+    aa,bb=_v009_best_text(a),_v009_best_text(b)
+    if aa is None or bb is None:
+        return {'state':'secao_executavel_nao_declarada_em_ambos'}
+    one,two=aa[1]['file_mapping'],bb[1]['file_mapping']
+    if one.get('state')!='resolvido' or two.get('state')!='resolvido':
+        return {'state':'mapeamento_executavel_inconclusivo',
+                'origem':one.get('state'), 'destino':two.get('state'),
+                'origin_section':aa[0],'target_section':bb[0]}
+    state='bytes_iguais' if one['hash_sha256']==two['hash_sha256'] and aa[1]['size']==bb[1]['size'] else 'bytes_diferentes'
+    return {'state':state,'origin_section':aa[0],'target_section':bb[0],
+            'origin_sha256':one['hash_sha256'],'target_sha256':two['hash_sha256'],
+            'origin_size':aa[1]['size'],'target_size':bb[1]['size'],
+            'interpretation':'Diferença/igualdade de bytes não indica compatibilidade ou incompatibilidade ABI.'}
+
+_v008_section_outcome=_v009_outcome
+
+
+def _v009_make_delta(scans:dict[str,dict])->dict:
+    ai=scans.get('ORIGEM',{}).get('images',{})
+    bi=scans.get('DESTINO',{}).get('images',{})
+    ci=scans.get('CONTROLE',{}).get('images',{})
+    ids=sorted(set(ai)|set(bi)|set(ci))
+    pairs=[]
+    for identifier in ids:
+        row={}
+        for k,images in (('origin',ai),('target',bi),('control',ci)):
+            img=images.get(identifier)
+            main=_v009_best_text(img)
+            row[k]=({'status':img['status'],'coordinate_system':img.get('coordinate_system'),
+                     'function_starts':img['function_starts'],
+                     'text_section':main[0] if main else None,
+                     'text_mapping':main[1]['file_mapping']['state'] if main else None}
+                    if img else None)
+        row.update({'identifier':identifier,'text_comparison':_v009_outcome(ai.get(identifier),bi.get(identifier)),
+                    'origin_vs_control':_v009_outcome(ai.get(identifier),ci.get(identifier)) if 'CONTROLE' in scans else None,
+                    'control_vs_target':_v009_outcome(ci.get(identifier),bi.get(identifier)) if 'CONTROLE' in scans else None})
+        pairs.append(row)
+    return {'iosla_version':APP_VERSION,'generated_at':datetime.now(timezone.utc).isoformat(),
+            'mode':'Mach-O Fileset Mapping & ABI 2.0: evidências estruturais somente leitura',
+            'summary':{'images_compared':len(pairs),
+                       'states':dict(Counter(r['text_comparison']['state'] for r in pairs)),
+                       'origin_images':len(ai),'target_images':len(bi),'control_images':len(ci),
+                       'origin_vs_control_states':dict(Counter(r['origin_vs_control']['state'] for r in pairs)) if 'CONTROLE' in scans else {},
+                       'control_vs_target_states':dict(Counter(r['control_vs_target']['state'] for r in pairs)) if 'CONTROLE' in scans else {},
+                       'mapped_executable_sections_by_image':{label:scan.get('summary',{}).get('images_with_mapped_text',0)
+                                                              for label,scan in scans.items()},
+                       'function_starts_decoded_by_image':{label:scan.get('summary',{}).get('images_with_decoded_function_starts',0)
+                                                           for label,scan in scans.items()}},
+            'scans':{label:{'path':row.get('path'),'format':row.get('format'),'images_analyzed':row.get('images_analyzed'),
+                            'summary':row.get('summary',{}),'parser_notes':row.get('parser_notes',[])}
+                     for label,row in scans.items()},
+            'images':pairs,
+            'warnings':['Modelo de coordenadas somente escolhido quando a âncora __TEXT confirma a posição do cabeçalho.',
+                        '__TEXT_EXEC,__text tem preferência; __TEXT,__text serve de alternativa.',
+                        'LC_FUNCTION_STARTS são limites/posições, não símbolos nem assinaturas de funções.',
+                        'Hashes binários não comprovam compatibilidade ABI, segurança, inicialização ou patch.']}
+
+make_abi_delta_v008=_v009_make_delta
+
+
+def _v009_delta_md(report:dict)->str:
+    s=report['summary']
+    lines=[f'# IOSLA v{APP_VERSION} — Mach-O Fileset Mapping & ABI Recovery','',
+           '**Somente leitura; nenhuma compatibilidade ABI ou boot demonstrada.**','',
+           f"- Imagens origem / controle / destino: {s['origin_images']} / {s['control_images']} / {s['target_images']}",
+           f"- Seções executáveis mapeadas: {s['mapped_executable_sections_by_image']}",
+           f"- LC_FUNCTION_STARTS decodificadas: {s['function_starts_decoded_by_image']}",'',
+           '## Comparações origem ↔ destino','']
+    lines.extend(f'- {k}: **{v}**' for k,v in sorted(s['states'].items()))
+    if s['control_images']:
+        lines+=['','## Triangulação estrutural','',
+                f"- A↔B (XS / controle): {s['origin_vs_control_states']}",
+                f"- B↔C (controle / recente): {s['control_vs_target_states']}"]
+    lines+=['','## Imagens de interesse','','| Imagem | Execução A↔C | Function starts (A / B / C) |',
+            '|---|---|---|']
+    picks=('AGX','IOGPUFamily','IOSurface','AppleARMPlatform','AppleT8020','com.apple.kernel')
+    for it in report['images']:
+        if any(p in it['identifier'] for p in picks):
+            ns=[str((it.get(side) or {}).get('function_starts',{}).get('count','?'))
+                if it.get(side) else 'n/d' for side in ('origin','control','target')]
+            lines.append(f"| `{it['identifier']}` | {it['text_comparison']['state']} | {' / '.join(ns)} |")
+    lines+=['','## Limitações','']+['- '+w for w in report['warnings']]
+    return '\n'.join(lines)+'\n'
+
+_v008_markdown_abi=_v009_delta_md
+
+
+def _v009_triangulation(snaps:dict[str,Snapshot],inputs:dict|None=None)->dict:
+    report=_original_triangulation_v008(snaps,inputs)
+    a,b,c=[snaps.get(x) for x in ('ORIGEM','CONTROLE','DESTINO')]
+    if not(a and b and c):
+        report['pairwise_interpretation']={'A_B':'controle_nao_fornecido','B_C':'controle_nao_fornecido'}
+        return report
+    comparable_ab=report['conditions']['xs_and_control_same_version_and_build']
+    comparable_bc=report['conditions']['control_and_recent_same_model']
+    counts=Counter()
+    versions=Counter()
+    for item in report['comparison']:
+        ab,bc=item['xs_vs_control'],item['control_vs_recent']
+        if not comparable_ab:
+            item['ab_interpretation']='mesma_versao_build_nao_confirmada; metadados_apenas'
+        else:
+            item['ab_interpretation']=ab
+        if comparable_bc:
+            item['bc_interpretation']='mesmo_modelo: '+bc
+            item['pattern']=('mesmo_modelo_metadados_modificados' if bc=='metadados_diferentes_no_inventario'
+                             else 'mesmo_modelo_metadados_preservados' if bc=='metadados_iguais_no_inventario'
+                             else 'mesmo_modelo_presenca_nao_observada') if not comparable_ab else item['pattern']
+            old,new=item['versions']['CONTROL'],item['versions']['RECENT']
+            if old is not None and new is not None:
+                versions['versao_alterada' if old!=new else 'versao_igual']+=1
+        else:
+            item['bc_interpretation']='modelos_distintos_ou_desconhecidos'
+        counts[item['pattern']]+=1
+    report['summary']['patterns']=dict(counts)
+    report['summary']['control_vs_target_versions']=dict(versions)
+    report['pairwise_interpretation']={'A_B':('mesma_build_e_versao; diferencas_observacionais_de_hardware'
+                                                   if comparable_ab else 'versoes_ou_builds_distintos; nao_isola_hardware'),
+                                       'B_C':('mesmo_modelo; evolucao_observacional_de_versoes_e_metadados'
+                                                   if comparable_bc else 'modelos_diferentes; nao_isola_evolucao_do_sistema')}
+    report['warnings'].append('Comparação B↔C é preservada por par mesmo quando A↔B usa builds distintos.')
+    return report
+
+_original_triangulation_v008=make_triangulation_v008
+make_triangulation_v008=_v009_triangulation
+
+
+def _v009_triangulation_md(report:dict)->str:
+    rows=[f'# IOSLA v{APP_VERSION} — Firmware Triangulation', '',
+          '**Análise observacional, não causal; sem comprovação de port.**','',
+          '## Firmwares','']
+    for label,inf in report['firmwares'].items():
+        rows.append('- '+label+': '+(f"{inf['device']} / iOS {inf['version']} / build {inf['build']} / {inf['kexts']} KEXTs" if inf else 'não fornecido'))
+    rows+=['','## Comparações por par','']
+    for pair,context in report.get('pairwise_interpretation',{}).items():
+        rows.append('- '+pair.replace('_','↔')+': '+context)
+    rows+=['','## Padrões globais observados','']
+    rows += [f'- {k}: **{v}**' for k,v in sorted(report['summary']['patterns'].items())]
+    if 'control_vs_target_versions' in report['summary']:
+        rows+=['','## Versões declaradas no mesmo iPhone 11','']
+        rows += [f'- {key}: **{count}**' for key,count in report['summary']['control_vs_target_versions'].items()]
+    rows+=['','## Componentes investigados','','| Driver | A↔B | B↔C | Contexto B↔C |', '|---|---|---|---|']
+    keys=('AGX','T8020','IOGPU','IOSurface','ANE','AppleARMPlatform')
+    for item in report['comparison']:
+        if any(k.lower() in item['identifier'].lower() for k in keys):
+            rows.append(f"| `{item['identifier']}` | {item['xs_vs_control']} | {item['control_vs_recent']} | {item.get('bc_interpretation','n/d')} |")
+    rows+=['','## Avisos','']+['- '+x for x in report['warnings']]
+    return '\n'.join(rows)+'\n'
+
+_v008_triangulation_md=_v009_triangulation_md
+
+# Driver Deep continues to use the original audit; add mapped code section and provenance.
+_original_deep_v008=make_deep_driver_v008
+
+def _v009_deep(driver:str,snaps:dict[str,Snapshot],scans:dict[str,dict],port:dict|None=None)->dict:
+    report=_original_deep_v008(driver,snaps,scans,port)
+    image=report.get('source_image') or {}
+    best=_v009_best_text(image)
+    report['executable_section']={'name':best[0], 'size':best[1]['size'],
+                                  'mapping':best[1]['file_mapping']} if best else None
+    report['abi_limitations']=['Fingerprint não comprova ABI; possíveis alterações C++/PAC não foram validadas.',
+                                'A integração da KEXT ao kernel e o boot não são realizados.']
+    return report
+
+make_deep_driver_v008=_v009_deep
+
+_original_deep_md_v008=_v008_deep_md
+
+def _v009_deep_md(report:dict)->str:
+    base=_original_deep_md_v008(report).replace('IOSLA v0.0.8','IOSLA v'+APP_VERSION)
+    part=report.get('executable_section')
+    extra=['','## Seção executável mapeada','']
+    if part:
+        m=part['mapping']
+        extra += [f"- Seção: `{part['name']}`", f"- Tamanho: {part['size']} bytes",
+                  f"- Estado de mapeamento: **{m.get('state','?')}**",
+                  f"- SHA-256 observado: `{m.get('hash_sha256')}`" if m.get('hash_sha256') else '- SHA-256: não disponível']
+    else:
+        extra += ['- Nenhuma seção executável interpretável neste Mach-O.']
+    extra += ['', '## Advertência ABI','']+['- '+x for x in report.get('abi_limitations',[])]
+    return base+'\n'.join(extra)+'\n'
+
+_v008_deep_md=_v009_deep_md
+
+# In terminal summary and self-tests use current release number.
+_original_add_summary_v008=_v008_add_summary
+
+def _v009_add_summary(self,key,files,detail):
+    _original_add_summary_v008(self,key,files,detail)
+    for f in self.generated:
+        if f.name.startswith('IOSLA_RESUMO_') and f.suffix=='.md':
+            text_data=f.read_text(encoding='utf-8')
+            text_data=text_data.replace(' (v0.0.8)',' (v'+APP_VERSION+')')
+            f.write_text(text_data,encoding='utf-8')
+
+_v008_add_summary=_v009_add_summary
+
+
+def _v009_self_test():
+    import tempfile
+    # Cross-image fileoff test: second Mach-O's executable code and __LINKEDIT
+    # are far beyond the end of the next LC_FILESET_ENTRY range.
+    blob=bytearray(12800)
+    def pack_seg(segname,vmaddr,fileoff,filesize,section=None):
+        sections = []
+        if section:
+            secname,addr,length,offset=section
+            sections.append(struct.pack('<16s16sQQIIIIIIII',secname.encode().ljust(16,b'\0'),
+                segname.encode().ljust(16,b'\0'),addr,length,offset,2,0,0,0x80000400,0,0,0))
+        n=len(sections)
+        return (struct.pack('<II16sQQQQiiII',LC_SEGMENT_64,72+80*n,
+                segname.encode().ljust(16,b'\0'),vmaddr,filesize,fileoff,filesize,7,5,n,0)
+                +b''.join(sections))
+    # Two child entries. First child's segment data follows the NEXT entry's offset.
+    entryname=b'com.apple.AGXG11P\0'
+    item=struct.pack('<IIQQII',LC_FILESET_ENTRY,32+len(entryname),0x110000,512,32,0)+entryname
+    secondname=b'com.example.Second\0'
+    item2=struct.pack('<IIQQII',LC_FILESET_ENTRY,32+len(secondname),0x150000,2048,32,0)+secondname
+    root_seg=pack_seg('__TEXT',0x10000,0,512)
+    h=struct.pack('<IiiIIIII',0xfeedfacf,CPU_TYPE_ARM64,0,0xC,3,len(root_seg)+len(item)+len(item2),0,0)
+    blob[0:len(h+root_seg+item+item2)]=h+root_seg+item+item2
+    # Child text contains header, while its real executable code lives at 6000,
+    # its LC_FUNCTION_STARTS is in __LINKEDIT around 9010.
+    childseg=pack_seg('__TEXT',0x120000,512,512)
+    executable=pack_seg('__TEXT_EXEC',0x130000,6000,120,('__text',0x130000,120,6000))
+    linkedit=pack_seg('__LINKEDIT',0x140000,9000,100)
+    fs=struct.pack('<IIII',V008_LC_FUNCTION_STARTS,16,9010,4)
+    cb=struct.pack('<IiiIIIII',0xfeedfacf,CPU_TYPE_ARM64,0,0xC,4,
+                   len(childseg)+len(executable)+len(linkedit)+len(fs),0,0)
+    blob[512:512+len(cb+childseg+executable+linkedit+fs)]=cb+childseg+executable+linkedit+fs
+    sec2=pack_seg('__TEXT',0x150000,2048,256)
+    h2=struct.pack('<IiiIIIII',0xfeedfacf,CPU_TYPE_ARM64,0,0xC,1,len(sec2),0,0)
+    blob[2048:2048+len(h2+sec2)]=h2+sec2
+    blob[6000:6120]=b'\xaa\xbb\xcc\xdd'*30
+    blob[9010:9014]=b'\x01\x02\x03\x00'
+    scan=_v009_scan_decoded(bytes(blob),'teste fileset')
+    assert len(scan['images'])==3
+    driver=scan['images']['com.apple.AGXG11P']
+    assert driver['coordinate_system']['model']=='fileset_absoluto',driver
+    section=driver['sections']['__TEXT_EXEC,__text']
+    assert section['file_mapping']['state']=='resolvido',section
+    assert section['file_mapping']['offset']==6000
+    assert driver['image_region_end']==2048, driver['image_region_end']
+    assert section['file_mapping']['offset']>driver['image_region_end']
+    assert section['file_mapping']['hash_sha256']==hashlib.sha256(bytes(blob[6000:6120])).hexdigest()
+    assert driver['function_starts']['state']=='delimitado',driver['function_starts']
+    assert driver['function_starts']['count']==3
+    assert driver['function_starts']['file_offset']==9010
+    assert _v009_outcome(driver,driver)['state']=='bytes_iguais'
+    other={'sections':{'__TEXT_EXEC,__text':{'size':120,'file_mapping':{'state':'resolvido','hash_sha256':'f'*64}}}}
+    assert _v009_outcome(driver,other)['state']=='bytes_diferentes'
+    # Root Mach-O using image-relative fileoffs when image starts at >0.
+    variant=bytearray(blob)
+    # In child __TEXT fileoff field is at +32(header)+40 inside segment.
+    struct.pack_into('<Q',variant,512+32+40,0)
+    # Do not demand valid sections on the image-relative variant; anchor is enough.
+    row=_v009_scan_image(bytes(variant),'com.apple.AGXG11P',512,12800)
+    assert row['coordinate_system']['model']=='imagem_relativa',row['coordinate_system']
+    # Incomparable A↔B must not prevent comparing the SAME iPhone 11 B↔C.
+    def k(name,version):return Kext(name,version)
+    a=Snapshot('ORIGEM','mock','synthetic',{'one':k('one','1')},ios_version='18.7.10',build='B',device='iPhone11,2')
+    b=Snapshot('CONTROLE','mock','synthetic',{'one':k('one','1')},ios_version='18.6.2',build='A',device='iPhone12,1')
+    c=Snapshot('DESTINO','mock','synthetic',{'one':k('one','2')},ios_version='27.0.1',build='C',device='iPhone12,1')
+    tri=make_triangulation_v008({'ORIGEM':a,'CONTROLE':b,'DESTINO':c})
+    assert tri['summary']['patterns']['mesmo_modelo_metadados_modificados']==1
+    assert tri['summary']['control_vs_target_versions']['versao_alterada']==1
+    assert 'nao_isola_hardware' in tri['pairwise_interpretation']['A_B']
+    assert 'mesmo_modelo' in tri['pairwise_interpretation']['B_C']
+    with tempfile.TemporaryDirectory(prefix='iosla9_') as td:
+        for prefix,rep,renderer in [('ABI_DELTA',_v009_make_delta({'ORIGEM':scan,'DESTINO':scan}),_v009_delta_md),
+                                    ('TRIANGULACAO',tri,_v009_triangulation_md)]:
+            jp,md=_v008_export(prefix,rep,renderer,Path(td))
+            assert jp.is_file() and md.is_file()
+            assert json.loads(jp.read_text())['iosla_version']=='0.0.9'
+    print('IOSLA v0.0.9: offsets globais fileset, __TEXT_EXEC, LC_FUNCTION_STARTS e triangulação por par OK.')
+
+
+_v009_previous_main=main
+
+def main():
+    if len(sys.argv)==2 and sys.argv[1]=='--self-test':
+        # Earlier tests run via v0.0.7 entrypoint; v0.0.8's fixed-version synthetic
+        # offset test is superseded by stronger v0.0.9 tests above.
+        _v008_original_main()
+        _v009_self_test()
+        return
+    _v009_previous_main()
+
+
 if __name__ == '__main__':
     try:
         main()
-    except (IOSLAError, OSError, ValueError) as exc:
-        print('[ERRO]', exc)
+    except (IOSLAError,KernelFormatError,OSError,ValueError,MemoryError,struct.error) as exc:
+        print('[ERRO]',exc)
         raise SystemExit(1)
